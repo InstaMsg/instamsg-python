@@ -216,9 +216,7 @@ class InstaMsgSendError(InstaMsgError):
     def __str__(self):
         return repr(self.value)
     
-import time
-import socket
-import sys
+####MqttClient ###############################################################################
 
 MQTT_KEEPALIVE_SECONDS = 60
 MQTT_PROTOCOL_VERSION = 3
@@ -332,12 +330,12 @@ class MqttClient:
         self.__resetInitSockNConnect()
         if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
     
-    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, retain=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
+    def publish(self, topic, payload, qos=MQTT_QOS0, retain=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
         self.__validateTopic(topic)
         self.__validateQos(qos)
         self.__validateResultHandler(resultHandler)
         self.__validateTimeout(resultHandlerTimeout)
-        fixedHeader = MqttFixedHeader(PUBLISH, qos=MQTT_QOS0, dup=dup, retain=0)
+        fixedHeader = MqttFixedHeader(PUBLISH, qos=MQTT_QOS0, dup=0, retain=0)
         messageId = 0
         if(qos > MQTT_QOS0): messageId = self.__generateMessageId()
         variableHeader = {'messageId': messageId, 'topic': str(topic)}
@@ -366,7 +364,7 @@ class MqttClient:
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
             self.__validateResultHandler(resultHandler)
             self.__validateTimeout(resultHandlerTimeout)
-            fixedHeader = MqttFixedHeader(PUBLISH, qos=1, dup=0, retain=0)
+            fixedHeader = MqttFixedHeader(UNSUBSCRIBE, qos=1, dup=0, retain=0)
             messageId = self.__generateMessageId()
             variableHeader = {'messageId': messageId}
             if(isinstance(topics, str)):
@@ -467,7 +465,7 @@ class MqttClient:
         if msgType == CONNACK:
             self.__handleConnAckMsg(mqttMessage)
         elif msgType == PUBLISH:
-            self.__handlePublishsg(mqttMessage)
+            self.__handlePublishMsg(mqttMessage)
         elif msgType == SUBACK:
             self.__handleSubAck(mqttMessage)
         elif msgType == UNSUBACK:
@@ -491,16 +489,19 @@ class MqttClient:
         resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
             resultHandler(1)
+            del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleUnSubAck(self, mqttMessage):
-        resultHandler = self.__resultHandlers.get(mqttMessage.messageId)
+        resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
             resultHandler(1)
+            del self.__resultHandlers[mqttMessage.messageId]
     
     def __onPublish(self, mqttMessage):
-        resultHandler = self.__resultHandlers.get(mqttMessage.messageId)
+        resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
             resultHandler(1)
+            del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleConnAckMsg(self, mqttMessage):
         connectReturnCode = mqttMessage.connectReturnCode
@@ -591,6 +592,8 @@ class MqttClient:
         self.__sendall(encodedMsg)
         self.__nextPingReqTime = time.time() + MQTT_KEEPALIVE_SECONDS
     
+####Mqtt Codec ###############################################################################
+
 
 class MqttDecoder:
     READING_FIXED_HEADER_FIRST = 0
@@ -636,6 +639,7 @@ class MqttDecoder:
             if(self.__state == self.MESSAGE_READY):
                 # returns a tuple of (mqttMessage, dataRemaining)
                 mqttMsg = self.__msgFactory.message(self.__fixedHeader, self.__variableHeader, self.__payload)
+                print mqttMsg.toString()
                 self.__init()
                 return mqttMsg
             if(self.__state == self.BAD):
@@ -690,11 +694,11 @@ class MqttDecoder:
                 self.__variableHeader['messageId'] = messageId
                 self.__state = self.MESSAGE_READY
         elif self.__fixedHeader.messageType == PUBLISH:
-            if(self.__variableHeader['topic'] is None):
-                self.__decodeString()
-            if (self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is None):
+            if(not self.__variableHeader.has_key('topic') or self.__variableHeader['topic'] is None):
+                self.__decodeTopic()
+            if ((self.__variableHeader.has_key('topic') and self.__variableHeader['topic'] is not None) and (not self.__variableHeader.has_key('messageId') or self.__variableHeader['messageId'] is None)):
                 self.__variableHeader['messageId'] = self.__decodeMsbLsb()
-            if(self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is not None):
+            if ((self.__variableHeader.has_key('topic') and self.__variableHeader['topic'] is not None) and (self.__variableHeader.has_key('messageId') and self.__variableHeader['messageId'] is not None)):
                 self.__state = self.READING_PAYLOAD
         elif self.__fixedHeader.messageType in [PINGRESP, DISCONNECT]:
             self.__mqttMsg = self.__msgFactory.message(self.__fixedHeader)
@@ -719,11 +723,13 @@ class MqttDecoder:
                 self.__payload = paloadBytes
                 self.__state = self.MESSAGE_READY
     
-    def __decodeString(self):
-        stringLength = self.__variableHeader['topicLength']
-        if(stringLength is None):
-            self.__variableHeader['topicLength'] = self.__decodeMsbLsb()
-        elif (len(self.__data) < stringLength):
+    def __decodeTopic(self):
+        if(self.__variableHeader.has_key('topicLength')):
+            stringLength = self.__variableHeader['topicLength']
+        else:
+            stringLength = self.__decodeMsbLsb()
+            self.__variableHeader['topicLength'] = stringLength
+        if (self.__data and stringLength and (len(self.__data) < stringLength)):
             return None  # wait for more bytes
         else:
             self.__variableHeader['topic'] = self.__getNBytesStr(stringLength)
@@ -820,8 +826,7 @@ class MqttEncoder:
             if (mqttConnectMessage.isCleanSession):
                 connectFlagsByte |= 0x02;
             encodedVariableHeader = self.__encodeIntShort(len(mqttConnectMessage.protocolName)) + mqttConnectMessage.protocolName + chr(mqttConnectMessage.version) + chr(connectFlagsByte) + self.__encodeIntShort(mqttConnectMessage.keepAliveTimeSeconds)
-            a= self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + encodedPayload
-            return a
+            return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + encodedPayload
         else:
             raise TypeError('MqttEncoder: Expecting message object of type %s got %s' % (MqttConnectMsg.__name__, mqttConnectMessage.__class__.__name__)) 
             
@@ -837,9 +842,9 @@ class MqttEncoder:
         if(isinstance(mqttPublishMsg, MqttPublishMsg)):
             fixedHeader = mqttPublishMsg.fixedHeader
             topic = mqttPublishMsg.topic
+            variableHeaderSize = 2 + len(topic) 
             if(fixedHeader.qos > 0):
-                variableHeaderSize = 2 + len(topic) + 2 
-            else:  variableHeaderSize = 0
+                variableHeaderSize = variableHeaderSize + 2 
             encodedPayload = mqttPublishMsg.payload
             # Encode Variable Header
             encodedVariableHeader = self.__encodeIntShort(len(topic)) + self.__encodeStringUtf8(topic)
@@ -1000,8 +1005,8 @@ class MqttConnectMsg(MqttMsg):
         self.clientId = payload.get('clientId') or ''
         self.username = payload.get('username') or ''
         self.password = payload.get('password') or ''
-        self.willTopic = payload.get('willTopic') or ' '
-        self.willMessage = payload.get('willMessage') or ' '
+        self.willTopic = payload.get('willTopic') or ''
+        self.willMessage = payload.get('willMessage') or ''
         
 class MqttConnAckMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
@@ -1140,6 +1145,7 @@ class MqttEncoderError(Exception):
         self.value = value
     def __str__(self):
         return repr(self.value)
+
     
 ####HttpClient ###############################################################################    
     
