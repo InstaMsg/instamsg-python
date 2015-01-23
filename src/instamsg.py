@@ -6,6 +6,7 @@ import os
 
 ####InstaMsg ###############################################################################
 INSTAMSG_MAX_BYTES_IN_MSG = 10240
+INSTAMSG_KEEP_ALIVE_TIMER = 60
 INSTAMSG_HOST = "localhost"
 INSTAMSG_PORT = 1883
 INSTAMSG_PORT_SSL = 8883
@@ -15,19 +16,20 @@ INSTAMSG_HTTPS_PORT = 443
 INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
 
 class InstaMsg:
-    def __init__(self, clientId, autKey, connectHandler, disConnectHandler, options={}):
+    def __init__(self, clientId, authKey, connectHandler, disConnectHandler, options={}):
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
         if(not callable(disConnectHandler)): raise ValueError('disConnectHandler should be a callable object.')
         self.clientId = clientId
-        self.autKey = autKey    
+        self.authKey = authKey 
+        self.__onConnectCallBack = connectHandler   
         self.options = options
-        
-        
-        self.__enableTcp = options.get('tcp') or 1
+        if(options.has_key('tcp')):
+            self.__enableTcp = options.get('tcp')
+        else: self.__enableTcp = 1
         self.__defaultReplyTimeout = INSTAMSG_RESULT_HANDLER_TIMEOUT
-        self.__msgHandlers ={}
+        self.__msgHandlers = {}
         self.__sendMsgHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10}}
-        if(options.get('ssl')): 
+        if(options.has_key('ssl') and options.get('ssl')): 
             port = INSTAMSG_PORT_SSL 
             httpPort = INSTAMSG_HTTPS_PORT
         else: 
@@ -35,10 +37,15 @@ class InstaMsg:
             httpPort = INSTAMSG_HTTP_PORT
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
-            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], autKey)
+            if(options.has_key('keepAliveTimer')):
+                self.keepAliveTimer = options.get('keepAliveTimer')
+            else:
+                self.keepAliveTimer = INSTAMSG_KEEP_ALIVE_TIMER
+            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.keepAliveTimer)
             self.__mqttClient = MqttClient(INSTAMSG_HOST, port, clientIdAndUsername[0], mqttoptions)
-            self.__mqttClient.onConnect(connectHandler)
+            self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(disConnectHandler)
+            self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
             self.__mqttClient.onMessage(self.__handleMessage)
             self.__mqttClient.connect()
         else:
@@ -47,11 +54,13 @@ class InstaMsg:
         
     
     def process(self):
-        self.__mqttClient.process()
+        if(self.__mqttClient):
+            self.__mqttClient.process()
     
     def close(self):
         try:
             self.__mqttClient.disconnect()
+            self.__mqttClient = None
             self.__sendMsgHandlers = None
             self.__msgHandlers = None
             self.__subscribers = None
@@ -61,22 +70,30 @@ class InstaMsg:
     
     def publish(self, topic, msg, qos=0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(topic):
-            self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout)
+            try:
+                self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout)
+            except Exception, e:
+                raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
     
     def subscribe(self, topic, qos, msgHandler, resultHandler, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__mqttClient):
-            if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
-            if(topic and qos):
+            try:
+                if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
                 self.__msgHandlers[topic] = msgHandler
                 self.__mqttClient.subscribe(topic, qos, resultHandler, timeout)
+            except Exception, e:
+                raise InstaMsgSubError(str(e))
         else:
             raise InstaMsgSubError("Cannot subscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
             
 
-    def unsubscribe(self, topics, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
+    def unsubscribe(self, topics, resultHandler, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__mqttClient):
-            self.__mqttClient.unsubscribe(topics, resultHandler, timeout)
+            try:
+                self.__mqttClient.unsubscribe(topics, resultHandler, timeout)
+            except Exception, e:
+                raise InstaMsgUnSubError(str(e))
         else:
             raise InstaMsgUnSubError("Cannot unsubscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
     
@@ -87,7 +104,7 @@ class InstaMsg:
         except Exception, e:
             if(self.__sendMsgHandlers.has_key(handlerId)):
                 del self.__sendMsgHandlers[handlerId]
-            raise Exception(str(e))
+            raise InstaMsgSendError(str(e))
         
     def sendFile(self):
         pass
@@ -95,26 +112,39 @@ class InstaMsg:
     def logger(self):
         return self.logger
     
-    def __onConnect(self):
-        print "Connected"
+    def __onConnect(self, mqttClient):
+        if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
+        
+    def __handleDebugMessage(self, msg):
+        print msg
     
     def __handleMessage(self, mqttMsg):
         msg = Message(mqttMsg.payload)
         msg.id = mqttMsg.messageId
         msg.dup = mqttMsg.fixedHeader.dup
         msg.qos = mqttMsg.fixedHeader.qos
+        msg.topic = mqttMsg.topic
         msgHandler = self.__msgHandlers.get(mqttMsg.topic)
         if(msgHandler):
-            msgHandler(mqttMsg)
+            msgHandler(msg)
     
-    def __mqttClientOptions(self, username, password):
+    def __mqttClientOptions(self, username, password, keepAliveTimer):
+        if(len(password) > INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % INSTAMSG_MAX_BYTES_IN_MSG)
+        if(keepAliveTimer > 32768 or keepAliveTimer < INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % INSTAMSG_KEEP_ALIVE_TIMER)
         options = {}
         options['hasUserName'] = 1
         options['hasPassword'] = 1
         options['username'] = username
         options['password'] = password
+        options['willTopic'] = "test"
+        options['willMessage'] = "test"
+        options['isWillRetain'] = 0
+        options['isCleanSession'] = 1
+        options['keepAliveTimer'] = keepAliveTimer
+        options['willQos'] = 0
+        options['isWillFlag'] = 1
         return options
-        
+    
     def __getClientIdAndUsername(self, clientId):
         errMsg = 'clientId is not a valid uuid e.g. cbf7d550-7204-11e4-a2ad-543530e3bc65'
         if(clientId is None): raise ValueError('clientId cannot be null.')
@@ -122,12 +152,12 @@ class InstaMsg:
         c = clientId.split('-')
         if(len(c) != 5): raise ValueError(errMsg)
         cId = '-'.join(c[0:4])
-        pswd = c[4 ]
-        if(len(pswd) != 12): raise ValueError(errMsg)
-        return (cId, pswd)
+        userName = c[4 ]
+        if(len(userName) != 12): raise ValueError(errMsg)
+        return (cId, userName)
     
-    def __parseJson(self,jsonString):
-        return eval(jsonString) #Hack as not implemented Json Library
+    def __parseJson(self, jsonString):
+        return eval(jsonString)  # Hack as not implemented Json Library
     
 
 class Result:
@@ -218,7 +248,6 @@ class InstaMsgSendError(InstaMsgError):
     
 ####MqttClient ###############################################################################
 
-MQTT_KEEPALIVE_SECONDS = 60
 MQTT_PROTOCOL_VERSION = 3
 MQTT_PROTOCOL_NAME = "MQIsdp"
 MQTT_MAX_INT = 65535
@@ -255,6 +284,7 @@ MQTT_QOS1 = 1
 MQTT_QOS2 = 2
 
 class MqttClient:
+
     def __init__(self, host, port, clientId, options={}):
         if(not clientId):
             raise ValueError('clientId cannot be null.')
@@ -267,12 +297,14 @@ class MqttClient:
         self.clientId = clientId
         self.options = options
         self.options['clientId'] = clientId
+        self.keepAliveTimer = self.options['keepAliveTimer']
         self.__debug = options.get('debug') or 0
         self.__cleanSession = 1;
         self.__sock = None
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
+        self.__disconnecting = 0
         self.__nextConnTry = time.time()
         self.__nextPingReqTime = time.time()
         self.__lastPingRespTime = self.__nextPingReqTime
@@ -286,17 +318,18 @@ class MqttClient:
         self.__onDebugMessageCallBack = None
         self.__msgIdInbox = []
         self.__resultHandlers = {}
-               
+        
     def process(self):
         try:
-            self.connect()
-            if(self.__sockInit):
-                self.__receive()
-                if (self.__nextPingReqTime - time.time() <= 0):
-                    if (self.__nextPingReqTime - self.__lastPingRespTime > MQTT_KEEPALIVE_SECONDS):
-#                         self.disconnect()
-                        pass
-                    else: self.__sendPingReq()
+            if(not self.__disconnecting):
+                self.connect()
+                if(self.__sockInit):
+                    self.__receive()
+                    if (self.__nextPingReqTime - time.time() <= 0):
+                        if (self.__nextPingReqTime - self.__lastPingRespTime > self.keepAliveTimer):
+    #                         self.disconnect()
+                            pass
+                        else: self.__sendPingReq()
 #         except SocketTimeoutError:
 #             pass
 #         except SocketError, msg:
@@ -322,6 +355,7 @@ class MqttClient:
                 self.__sendall(encodedMsg)
     
     def disconnect(self):
+        self.__disconnecting = 1
         fixedHeader = MqttFixedHeader(DISCONNECT, qos=0, dup=0, retain=0)
         disConnectMsg = self.__mqttMsgFactory.message(fixedHeader)
         encodedMsg = self.__mqttEncoder.ecode(disConnectMsg)
@@ -330,7 +364,7 @@ class MqttClient:
         self.__resetInitSockNConnect()
         if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
     
-    def publish(self, topic, payload, qos=MQTT_QOS0, retain=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
+    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0):
         self.__validateTopic(topic)
         self.__validateQos(qos)
         self.__validateResultHandler(resultHandler)
@@ -344,7 +378,7 @@ class MqttClient:
         self.__sendall(encodedMsg)
         self.__validateResultHandler(resultHandler)
         if(qos == MQTT_QOS0 and resultHandler): 
-            resultHandler(0) #immediately return messageId 0 in case of qos 0
+            resultHandler(0)  # immediately return messageId 0 in case of qos 0
         elif (qos > MQTT_QOS0 and messageId and resultHandler): 
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
                 
@@ -364,23 +398,23 @@ class MqttClient:
         self.__sendall(encodedMsg)
                 
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
-            self.__validateResultHandler(resultHandler)
-            self.__validateTimeout(resultHandlerTimeout)
-            fixedHeader = MqttFixedHeader(UNSUBSCRIBE, qos=1, dup=0, retain=0)
-            messageId = self.__generateMessageId()
-            variableHeader = {'messageId': messageId}
-            if(isinstance(topics, str)):
-                topics = [topics]
+        self.__validateResultHandler(resultHandler)
+        self.__validateTimeout(resultHandlerTimeout)
+        fixedHeader = MqttFixedHeader(UNSUBSCRIBE, qos=1, dup=0, retain=0)
+        messageId = self.__generateMessageId()
+        variableHeader = {'messageId': messageId}
+        if(isinstance(topics, str)):
+            topics = [topics]
+        if(isinstance(topics, list)):
             for topic in topics:
                 self.__validateTopic(topic)
-            if(isinstance(topics, list)):
                 unsubMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self.__mqttEncoder.ecode(unsubMsg)
                 if(resultHandler):
                     self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
                 self.__sendall(encodedMsg)
                 return messageId
-            else:   raise TypeError('Topics should be an instance of string or list.') 
+        else:   raise TypeError('Topics should be an instance of string or list.') 
     
     def onConnect(self, callback):
         if(callable(callback)):
@@ -592,7 +626,7 @@ class MqttClient:
         pingReqMsg = self.__mqttMsgFactory.message(fixedHeader)
         encodedMsg = self.__mqttEncoder.ecode(pingReqMsg)
         self.__sendall(encodedMsg)
-        self.__nextPingReqTime = time.time() + MQTT_KEEPALIVE_SECONDS
+        self.__nextPingReqTime = time.time() + self.keepAliveTimer
     
 ####Mqtt Codec ###############################################################################
 
@@ -673,7 +707,7 @@ class MqttDecoder:
                     break
                 
     def __initPubVariableHeader(self):
-        self.__variableHeader['topicLength']= None
+        self.__variableHeader['topicLength'] = None
         self.__variableHeader['messageId'] = None
         self.__variableHeader['topic'] = None
         
@@ -705,9 +739,9 @@ class MqttDecoder:
         elif self.__fixedHeader.messageType == PUBLISH:
             if(self.__variableHeader['topic'] is None):
                 self.__decodeTopic()
-            if (self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is None):
+            if (self.__fixedHeader.qos > MQTT_QOS0 and self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is None):
                 self.__variableHeader['messageId'] = self.__decodeMsbLsb()
-            if (self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is not None):
+            if (self.__variableHeader['topic'] is not None and (self.__fixedHeader.qos == MQTT_QOS0 or self.__variableHeader['messageId'] is not None)):
                 self.__state = self.READING_PAYLOAD
         elif self.__fixedHeader.messageType in [PINGRESP, DISCONNECT]:
             self.__mqttMsg = self.__msgFactory.message(self.__fixedHeader)
@@ -833,7 +867,7 @@ class MqttEncoder:
                 connectFlagsByte |= 0x04
             if (mqttConnectMessage.isCleanSession):
                 connectFlagsByte |= 0x02;
-            encodedVariableHeader = self.__encodeIntShort(len(mqttConnectMessage.protocolName)) + mqttConnectMessage.protocolName + chr(mqttConnectMessage.version) + chr(connectFlagsByte) + self.__encodeIntShort(mqttConnectMessage.keepAliveTimeSeconds)
+            encodedVariableHeader = self.__encodeIntShort(len(mqttConnectMessage.protocolName)) + mqttConnectMessage.protocolName + chr(mqttConnectMessage.version) + chr(connectFlagsByte) + self.__encodeIntShort(mqttConnectMessage.keepAliveTimer)
             return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + encodedPayload
         else:
             raise TypeError('MqttEncoder: Expecting message object of type %s got %s' % (MqttConnectMsg.__name__, mqttConnectMessage.__class__.__name__)) 
@@ -985,7 +1019,7 @@ class MqttFixedHeader:
         self.remainingLength = remainingLength or 0
     
     def toString(self):
-        return 'fixedHeader=[messageType=%s, dup=%d, qos=%d, retain=%d, remainingLength=%d]' %(str(self.messageType), self.dup, self.qos, self.retain, self.remainingLength)
+        return 'fixedHeader=[messageType=%s, dup=%d, qos=%d, retain=%d, remainingLength=%d]' % (str(self.messageType), self.dup, self.qos, self.retain, self.remainingLength)
         
 class MqttMsg:
     def __init__(self, fixedHeader, variableHeader=None, payload=None):
@@ -994,7 +1028,7 @@ class MqttMsg:
         self.payload = payload
         
     def toString(self):
-        return '%s[[%s] [variableHeader= %s] [payload= %s]]' %(self.__class__.__name__, self.fixedHeader.toString(),str(self.variableHeader), self.payload)
+        return '%s[[%s] [variableHeader= %s] [payload= %s]]' % (self.__class__.__name__, self.fixedHeader.toString(), str(self.variableHeader), self.payload)
         
 
 class MqttConnectMsg(MqttMsg):
@@ -1003,18 +1037,18 @@ class MqttConnectMsg(MqttMsg):
         self.fixedHeader = fixedHeader
         self.protocolName = MQTT_PROTOCOL_NAME
         self.version = MQTT_PROTOCOL_VERSION
-        self.hasUserName = variableHeader.get('hasUserName') or 0
-        self.hasPassword = variableHeader.get('hasPassword') or 0
-        self.isWillRetain = variableHeader.get('isWillRetain') or 0
-        self.willQos = variableHeader.get('willQos') or 0
-        self.isWillFlag = variableHeader.get('isWillFlag') or 0
-        self.isCleanSession = variableHeader.get('isCleanSession') or 1
-        self.keepAliveTimeSeconds = variableHeader.get('keepAliveTimeSeconds') or MQTT_KEEPALIVE_SECONDS
-        self.clientId = payload.get('clientId') or ''
-        self.username = payload.get('username') or ''
-        self.password = payload.get('password') or ''
-        self.willTopic = payload.get('willTopic') or ''
-        self.willMessage = payload.get('willMessage') or ''
+        self.hasUserName = variableHeader.get('hasUserName')
+        self.hasPassword = variableHeader.get('hasPassword')
+        self.clientId = payload.get('clientId')
+        self.username = payload.get('username')
+        self.password = payload.get('password')
+        self.isWillRetain = variableHeader.get('isWillRetain')
+        self.willQos = variableHeader.get('willQos')
+        self.isWillFlag = variableHeader.get('isWillFlag')
+        self.isCleanSession = variableHeader.get('isCleanSession')
+        self.keepAliveTimer = variableHeader.get('keepAliveTimer')
+        self.willTopic = payload.get('willTopic')
+        self.willMessage = payload.get('willMessage')
         
 class MqttConnAckMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
@@ -1041,31 +1075,31 @@ class MqttDisconnetMsg(MqttMsg):
         
 class MqttPubAckMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
-        MqttMsg.__init__(self, fixedHeader,variableHeader)
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         
 class MqttPubRecMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
-        MqttMsg.__init__(self, fixedHeader,variableHeader)
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         
 class MqttPubRelMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
-        MqttMsg.__init__(self, fixedHeader,variableHeader)
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
 
 class MqttPubCompMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
-        MqttMsg.__init__(self, fixedHeader,variableHeader)
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
 
 class MqttPublishMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader, payload):
-        MqttMsg.__init__(self, fixedHeader,variableHeader,payload)
+        MqttMsg.__init__(self, fixedHeader, variableHeader, payload)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         self.topic = variableHeader.get('topic')
@@ -1074,7 +1108,7 @@ class MqttPublishMsg(MqttMsg):
 
 class MqttSubscribeMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader, payload=[]):
-        MqttMsg.__init__(self, fixedHeader,variableHeader,payload)
+        MqttMsg.__init__(self, fixedHeader, variableHeader, payload)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         # __payload = [{"topic":"a/b","qos":1}]
@@ -1082,7 +1116,7 @@ class MqttSubscribeMsg(MqttMsg):
 
 class MqttSubAckMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader, payload=[]):
-        MqttMsg.__init__(self, fixedHeader,variableHeader,payload)
+        MqttMsg.__init__(self, fixedHeader, variableHeader, payload)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         # __payload = [0,1,2]
@@ -1090,7 +1124,7 @@ class MqttSubAckMsg(MqttMsg):
 
 class MqttUnsubscribeMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader, payload=[]):
-        MqttMsg.__init__(self, fixedHeader,variableHeader,payload)
+        MqttMsg.__init__(self, fixedHeader, variableHeader, payload)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
         # __payload = [topic0,topic1,topic2]
@@ -1098,7 +1132,7 @@ class MqttUnsubscribeMsg(MqttMsg):
         
 class MqttUnsubAckMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader):
-        MqttMsg.__init__(self, fixedHeader,variableHeader)
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
 
@@ -1325,7 +1359,7 @@ class HTTPResponse:
                     self.end()
                 else:
                     self.end()
-            except Exception,e:
+            except Exception, e:
                 raise Exception(str(e))
         finally:
             self.end()
@@ -1423,7 +1457,7 @@ class HTTPClient:
         if(not isinstance(params, dict)): raise ValueError('HTTPClient:: params should be of type dictionary.')
         if(not isinstance(headers, dict)): raise ValueError('HTTPClient:: headers should be of type dictionary.')
         if(not isinstance(timeout, int)): raise ValueError('HTTPClient:: timeout should be of type int.')
-        if(not(isinstance(body, str) or isinstance(body, file) or body is None) ):raise ValueError('HTTPClient:: body should be of type string or file object.')
+        if(not(isinstance(body, str) or isinstance(body, file) or body is None)):raise ValueError('HTTPClient:: body should be of type string or file object.')
         try:
             try:
                 request = self.__createHttpRequest(method, url, params, headers)

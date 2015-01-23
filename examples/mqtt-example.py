@@ -17,6 +17,7 @@ def start(args):
             options['isWillRetain'] =0
             options['willQos'] =0
             options['isWillFlag'] =1
+            options['keepAliveTimer'] = 60
 #             clientId ="62513710-86c0-11e4-9dcf"
             clientId ="d06f5d10-8091-11e4-bd82"
             host = "localhost"
@@ -52,9 +53,10 @@ def __subscribe(mqttClient, topic, qos):
     mqttClient.subscribe(topic, qos, _resultHandler)
     
 def __publishMessage(mqttClient, topic, msg, qos):
+    dup = 0
     def _resultHandler(messageId):
         print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
-    mqttClient.publish(topic, msg,qos)
+    mqttClient.publish(topic, msg, qos, dup, _resultHandler)
     
 def __unsubscribe(mqttClient, topic):
     def _resultHandler(messageId):
