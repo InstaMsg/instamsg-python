@@ -305,10 +305,10 @@ class MqttClient:
         except socket.error, msg:
             self.__resetInitSockNConnect()
             if (self.__debug):
-                print("InstaMsg SocketError in process: %s" % (str(msg)))
+                self.__log("InstaMsg SocketError in process: %s" % (str(msg)))
         except:
             if (self.__debug):
-                print("InstaMsg Unknown Error in process: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
+                self.__log("InstaMsg Unknown Error in process: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
     
     def connect(self):
         if(self.__connecting == 0):
@@ -343,7 +343,9 @@ class MqttClient:
         encodedMsg = self.__mqttEncoder.ecode(publishMsg)
         self.__sendall(encodedMsg)
         self.__validateResultHandler(resultHandler)
-        if(messageId and resultHandler): 
+        if(qos == MQTT_QOS0 and resultHandler): 
+            resultHandler(0) #immediately return messageId 0 in case of qos 0
+        elif (qos > MQTT_QOS0 and messageId and resultHandler): 
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
                 
         
@@ -448,7 +450,7 @@ class MqttClient:
                 mqttMsg = None
             if (mqttMsg):
                 if (self.__debug):
-                    print('MqttClient:: Received data:%s' % mqttMsg)
+                    self.__log('MqttClient:: Received message:%s' % mqttMsg.toString())
                 self.__handleMqttMessage(mqttMsg) 
         except MqttFrameError:
             self.__resetInitSockNConnect()
@@ -620,6 +622,8 @@ class MqttDecoder:
                 self.__state = self.READING_FIXED_HEADER_REMAINING
             if(self.__state == self.READING_FIXED_HEADER_REMAINING):
                 self.__decodeFixedHeaderRemainingLength()
+                if (self.__fixedHeader.messageType == PUBLISH and not self.__variableHeader):
+                    self.__initPubVariableHeader()
             if(self.__state == self.READING_VARIABLE_HEADER):
                 self.__decodeVariableHeader()
             if(self.__state == self.READING_PAYLOAD):
@@ -639,7 +643,6 @@ class MqttDecoder:
             if(self.__state == self.MESSAGE_READY):
                 # returns a tuple of (mqttMessage, dataRemaining)
                 mqttMsg = self.__msgFactory.message(self.__fixedHeader, self.__variableHeader, self.__payload)
-                print mqttMsg.toString()
                 self.__init()
                 return mqttMsg
             if(self.__state == self.BAD):
@@ -668,6 +671,12 @@ class MqttDecoder:
                     self.__state = self.READING_VARIABLE_HEADER
                     self.__fixedHeader.remainingLength = self.__remainingLength
                     break
+                
+    def __initPubVariableHeader(self):
+        self.__variableHeader['topicLength']= None
+        self.__variableHeader['messageId'] = None
+        self.__variableHeader['topic'] = None
+        
 
     def __decodeVariableHeader(self):  
         if self.__fixedHeader.messageType in [CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ]:
@@ -694,11 +703,11 @@ class MqttDecoder:
                 self.__variableHeader['messageId'] = messageId
                 self.__state = self.MESSAGE_READY
         elif self.__fixedHeader.messageType == PUBLISH:
-            if(not self.__variableHeader.has_key('topic') or self.__variableHeader['topic'] is None):
+            if(self.__variableHeader['topic'] is None):
                 self.__decodeTopic()
-            if ((self.__variableHeader.has_key('topic') and self.__variableHeader['topic'] is not None) and (not self.__variableHeader.has_key('messageId') or self.__variableHeader['messageId'] is None)):
+            if (self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is None):
                 self.__variableHeader['messageId'] = self.__decodeMsbLsb()
-            if ((self.__variableHeader.has_key('topic') and self.__variableHeader['topic'] is not None) and (self.__variableHeader.has_key('messageId') and self.__variableHeader['messageId'] is not None)):
+            if (self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is not None):
                 self.__state = self.READING_PAYLOAD
         elif self.__fixedHeader.messageType in [PINGRESP, DISCONNECT]:
             self.__mqttMsg = self.__msgFactory.message(self.__fixedHeader)
@@ -724,9 +733,8 @@ class MqttDecoder:
                 self.__state = self.MESSAGE_READY
     
     def __decodeTopic(self):
-        if(self.__variableHeader.has_key('topicLength')):
-            stringLength = self.__variableHeader['topicLength']
-        else:
+        stringLength = self.__variableHeader['topicLength']
+        if(stringLength is None):
             stringLength = self.__decodeMsbLsb()
             self.__variableHeader['topicLength'] = stringLength
         if (self.__data and stringLength and (len(self.__data) < stringLength)):
