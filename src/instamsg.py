@@ -14,21 +14,35 @@ INSTAMSG_HTTP_HOST = 'api.instamsg.io'
 INSTAMSG_HTTP_PORT = 80
 INSTAMSG_HTTPS_PORT = 443
 INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
+INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
+# Logging
+INSTAMSG_LOG_INFO = 1
+INSTAMSG_LOG_ERR = 2
+INSTAMSG_LOG_DEBUG = 3
+# Error codes
+INSTAMSG_ERROR_TIMEOUT = 0
+INSTAMSG_ERROR_NO_HANDLERS = 1
+INSTAMSG_ERROR_SOCKET = 2
+INSTAMSG_ERROR_AUTHENTICATION = 3
+
 
 class InstaMsg:
-    def __init__(self, clientId, authKey, connectHandler, disConnectHandler, options={}):
+    def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
         if(not callable(disConnectHandler)): raise ValueError('disConnectHandler should be a callable object.')
-        self.clientId = clientId
-        self.authKey = authKey 
+        if(not callable(oneToOneMessageHandler)): raise ValueError('oneToOneMessageHandler should be a callable object.')
+        self.__clientId = clientId
+        self.__authKey = authKey 
+        self.__options = options
         self.__onConnectCallBack = connectHandler   
-        self.options = options
-        if(options.has_key('tcp')):
+        self.__oneToOneMessageHandler = oneToOneMessageHandler
+        self.__filesTopic = "instamsg/clients/" + clientId + "/files";
+        if(self.__options.has_key('tcp')):
             self.__enableTcp = options.get('tcp')
         else: self.__enableTcp = 1
         self.__defaultReplyTimeout = INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
-        self.__sendMsgHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10}}
+        self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10}}
         if(options.has_key('ssl') and options.get('ssl')): 
             port = INSTAMSG_PORT_SSL 
             httpPort = INSTAMSG_HTTPS_PORT
@@ -38,10 +52,10 @@ class InstaMsg:
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
             if(options.has_key('keepAliveTimer')):
-                self.keepAliveTimer = options.get('keepAliveTimer')
+                self.__keepAliveTimer = options.get('keepAliveTimer')
             else:
-                self.keepAliveTimer = INSTAMSG_KEEP_ALIVE_TIMER
-            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.keepAliveTimer)
+                self.__keepAliveTimer = INSTAMSG_KEEP_ALIVE_TIMER
+            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
             self.__mqttClient = MqttClient(INSTAMSG_HOST, port, clientIdAndUsername[0], mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(disConnectHandler)
@@ -55,13 +69,14 @@ class InstaMsg:
     
     def process(self):
         if(self.__mqttClient):
+            self.__processHandlersTimeout()
             self.__mqttClient.process()
     
     def close(self):
         try:
             self.__mqttClient.disconnect()
             self.__mqttClient = None
-            self.__sendMsgHandlers = None
+            self.__sendMsgReplyHandlers = None
             self.__msgHandlers = None
             self.__subscribers = None
             return 1
@@ -81,6 +96,8 @@ class InstaMsg:
             try:
                 if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
                 self.__msgHandlers[topic] = msgHandler
+                if(topic == self.__clientId):
+                    raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
                 self.__mqttClient.subscribe(topic, qos, resultHandler, timeout)
             except Exception, e:
                 raise InstaMsgSubError(str(e))
@@ -97,20 +114,41 @@ class InstaMsg:
         else:
             raise InstaMsgUnSubError("Cannot unsubscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
     
-    def send(self, topic, msg, replyHandler, timeout):
+    def send(self, clienId, msg, qos=0, dup=0, replyHandler=None, timeout=INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT):
         try:
-            handlerId = 0
-            pass
+            messageId = self._generateMessageId()
+            msg = Message(messageId, clienId, msg, qos, dup,replyTopic= self.__clientId, instaMsg=self)._sendMsgJsonString()
+            self._send(messageId, clienId, msg, qos, dup, replyHandler, timeout)
         except Exception, e:
-            if(self.__sendMsgHandlers.has_key(handlerId)):
-                del self.__sendMsgHandlers[handlerId]
             raise InstaMsgSendError(str(e))
         
     def sendFile(self):
         pass
     
-    def logger(self):
-        return self.logger
+    def log(self, level, message):
+        pass
+    
+    def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
+        try:
+            if(replyHandler):
+                self.__sendMsgReplyHandlers[messageId] = {'time':time.time(), 'timeout': timeout, 'handler':replyHandler}
+                def _resultHandler(result):
+                    if(result.failed()):
+                        replyHandler(result)
+                        del self.__sendMsgReplyHandlers[messageId]
+            else:
+                _resultHandler = None
+            self.publish(clienId, msg, qos, dup, _resultHandler)
+        except Exception, e:
+            if(self.__sendMsgReplyHandlers.has_key(messageId)):
+                del self.__sendMsgReplyHandlers[messageId]
+            raise Exception(str(e))
+            
+    def _generateMessageId(self):
+        messageId = self.__clientId + "-" + str(int(time.time() * 1000))
+        while(self.__sendMsgReplyHandlers.has_key(messageId)):
+            messageId = time.time()
+        return messageId;
     
     def __onConnect(self, mqttClient):
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
@@ -119,15 +157,57 @@ class InstaMsg:
         print msg
     
     def __handleMessage(self, mqttMsg):
-        msg = Message(mqttMsg.payload)
-        msg.id = mqttMsg.messageId
-        msg.dup = mqttMsg.fixedHeader.dup
-        msg.qos = mqttMsg.fixedHeader.qos
-        msg.topic = mqttMsg.topic
-        msgHandler = self.__msgHandlers.get(mqttMsg.topic)
-        if(msgHandler):
-            msgHandler(msg)
-    
+        if(mqttMsg.topic == self.__clientId):
+            self.__handleOneToOneMessage(mqttMsg)
+        elif(mqttMsg.topic == self.__filesTopic):
+            pass
+        else:
+            msg = Message(mqttMsg.messageId, mqttMsg.topic, mqttMsg.payload, mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup)
+            msgHandler = self.__msgHandlers.get(mqttMsg.topic)
+            if(msgHandler):
+                msgHandler(msg)
+                
+    def __handleOneToOneMessage(self, mqttMsg):
+        msgJson = self.__parseJson(mqttMsg.payload)
+        messageId, responseId, replyTopic = None, None, None
+        if(msgJson.has_key('reply_to')):
+            replyTopic = msgJson['reply_to']
+        else:
+            raise ValueError("Send message json should have reply_to address.")   
+        if(msgJson.has_key('message_id')):
+            messageId = msgJson['message_id']
+        else: 
+            raise ValueError("Send message json should have a message_id.") 
+        if(msgJson.has_key('response_id')):
+            responseId = msgJson['response_id']
+        if(msgJson.has_key('body')):
+            body = msgJson['body']
+        if(msgJson.has_key('status')):
+            status = int(msgJson['status'])
+        qos, dup = mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup
+        if(responseId):
+            # This is a response to existing message
+            if(status == 0):
+                if(not isinstance(body, list)):
+                    body = (None,body)
+                result = Result(None, 0, body)
+            else:
+                msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
+                result = Result(msg, 1)
+            msgHandler = self.__sendMsgReplyHandlers.get(responseId).get('handler')
+            if(msgHandler):
+                msgHandler(result)
+                del self.__sendMsgReplyHandlers[responseId]
+        else:
+            if(self.__oneToOneMessageHandler):
+                msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
+                self.__oneToOneMessageHandler(msg)
+                    
+    def __replyToMsg(self, replyTopic, msg, qos, dup=0, responseId = None, replyHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT, errorCode=None):
+        messageId = self.__generateMessageId()
+        replyMsg = self.Message(messageId, replyTopic, msg, qos, dup, responseId =responseId, replyTopic=self.__clientId, replyHandler=replyHandler, timeout=timeout, errorCode=errorCode)
+        self.__sendMsg(replyMsg, replyHandler, timeout)
+        
     def __mqttClientOptions(self, username, password, keepAliveTimer):
         if(len(password) > INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % INSTAMSG_MAX_BYTES_IN_MSG)
         if(keepAliveTimer > 32768 or keepAliveTimer < INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % INSTAMSG_KEEP_ALIVE_TIMER)
@@ -136,13 +216,13 @@ class InstaMsg:
         options['hasPassword'] = 1
         options['username'] = username
         options['password'] = password
-        options['willTopic'] = "test"
-        options['willMessage'] = "test"
-        options['isWillRetain'] = 0
         options['isCleanSession'] = 1
         options['keepAliveTimer'] = keepAliveTimer
+        options['isWillFlag'] = 0
         options['willQos'] = 0
-        options['isWillFlag'] = 1
+        options['isWillRetain'] = 0
+        options['willTopic'] = ""
+        options['willMessage'] = ""
         return options
     
     def __getClientIdAndUsername(self, clientId):
@@ -159,61 +239,85 @@ class InstaMsg:
     def __parseJson(self, jsonString):
         return eval(jsonString)  # Hack as not implemented Json Library
     
-
-class Result:
-    def __init__(self, result, failed=1, cause=None):
-        self.result = result
-        self.failed = 1
-        self.cause = cause
-        
-    def result(self):
-        return self.result
-    
-    def failed(self):
-        return self.failed
-    
-    def succeeded(self):
-        return not self.failed
-    
-    def cause(self):
-        return self.cause
-
-
+    def __processHandlersTimeout(self): 
+        for key, value in self.__sendMsgReplyHandlers.items():
+            if((time.time() - value['time']) >= value['timeout']):
+                value['handler'] = None
+                del self.__sendMsgReplyHandlers[key]
+                
 class Message:
-    def __init__(self, content, options={}):
-        self.topic = None
-        self.content = content
-        self.id = options.get('id') or 0
-        self.dup = options.get('dup') or 0
-        self.qos = options.get('qos') or 0
-        self.retain = options.get('retain') or 0
-    
-    def qos(self):
-        return self.qos
-    
-    def isDublicate(self):
-        return self.dup
-    
-    def content(self):
-        return self.content
-    
-    def setTopic(self, topic):
-        self.topic = topic
+    def __init__(self, messageId, topic, body, qos=0, dup=0, replyTopic=None, instaMsg=None):
+        self.__instaMsg = instaMsg
+        self.__id = messageId
+        self.__topic = topic
+        self.__body = body
+        self.__replyTopic = replyTopic
+        self.__responseId = None
+        self.__dup = dup
+        self.__qos = qos
+        
+    def id(self):
+        return self.__id
     
     def topic(self):
-        return self.topic
+        return self.__topic
     
-    def reply(self, msg, replyHandler, timeout):
-        pass
+    def qos(self):
+        return self.__qos
+    
+    def isDublicate(self):
+        return self.__dup
+    
+    def body(self):
+        return self.__body
+    
+    def replyTopic(self):
+        return self.__replyTopic
+        
+    def reply(self, msg, dup=0, replyHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
+        if(self.__instaMsg and self.__replyTopic):
+            msgId = self.__instaMsg._generateMessageId()
+            replyMsgJsonString =  ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": "%s", "status": 1}')%(msgId, self.__id, self.__topic, msg)
+            self.__instaMsg._send(msgId, self.__replyTopic, replyMsgJsonString, self.__qos, dup, replyHandler, timeout)
+            
     
     def fail(self, errorCode, errorMsg):
-        pass
+        if(self.__instaMsg and self.__replyTopic):
+            msgId = self.__instaMsg._generateMessageId()
+            failReplyMsgJsonString =  ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": [%d, %s], "status": 0}')%(msgId, self.__id, self.__topic, errorCode, errorMsg)
+            self.__instaMsg._send(msgId, self.__replyTopic, failReplyMsgJsonString, self.__qos, 0, None, 0)
     
     def sendFile(self, fileName, resultHandler, timeout):
         pass
     
+    def _sendMsgJsonString(self):
+        return ('{"message_id": "%s", "reply_to": "%s", "body": "%s"}')%(self.__id, self.__replyTopic, self.__body)
+    
     def toString(self):
-        return ('[ id=%s, topic=%s, content=%s, qos=%s, dup=%s, retain=%s]') % (str(self.id), self.topic, self.content, str(self.qos), str(self.dup), str(self.retain))
+        return ('[ id=%s, topic=%s, body=%s, qos=%s, dup=%s, replyTopic=%s]') % (str(self.__id), str(self.__topic), str(self.__body), str(self.__qos), str(self.__dup), str(self.__replyTopic))
+    
+    def __sendReply(self, msg, replyHandler):
+        pass
+    
+class Result:
+    def __init__(self, result, succeeded=1, cause=None):
+        self.__result = result
+        self.__succeeded = 1
+        self.__cause = cause
+        
+    def result(self):
+        return self.__result
+    
+    def failed(self):
+        return not self.__succeeded
+    
+    def succeeded(self):
+        return self.__succeeded
+    
+    def cause(self):
+        return self.__cause
+
+
     
 
 class InstaMsgError(Exception):
@@ -330,6 +434,7 @@ class MqttClient:
     #                         self.disconnect()
                             pass
                         else: self.__sendPingReq()
+                self.__processHandlersTimeout()
 #         except SocketTimeoutError:
 #             pass
 #         except SocketError, msg:
@@ -378,7 +483,7 @@ class MqttClient:
         self.__sendall(encodedMsg)
         self.__validateResultHandler(resultHandler)
         if(qos == MQTT_QOS0 and resultHandler): 
-            resultHandler(0)  # immediately return messageId 0 in case of qos 0
+            resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
         elif (qos > MQTT_QOS0 and messageId and resultHandler): 
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
                 
@@ -524,19 +629,19 @@ class MqttClient:
     def __handleSubAck(self, mqttMessage):
         resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
-            resultHandler(1)
+            resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleUnSubAck(self, mqttMessage):
         resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
-            resultHandler(1)
+            resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __onPublish(self, mqttMessage):
         resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
-            resultHandler(1)
+            resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleConnAckMsg(self, mqttMessage):
@@ -615,7 +720,7 @@ class MqttClient:
         self.__messageId = self.__messageId + 1
         return self.__messageId
     
-    def __processHandlerTimeouts(self):
+    def __processHandlersTimeout(self):
         for key, value in self.__resultHandlers.items():
             if((time.time() - value['time']) >= value['timeout']):
                 value['handler'] = None
@@ -892,7 +997,7 @@ class MqttEncoder:
             encodedVariableHeader = self.__encodeIntShort(len(topic)) + self.__encodeStringUtf8(topic)
             if (fixedHeader.qos > 0): 
                 encodedVariableHeader = encodedVariableHeader + self.__encodeIntShort(mqttPublishMsg.messageId)
-            return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + str(mqttPublishMsg.payload)
+            return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + encodedPayload
              
         else:
             raise TypeError('MqttEncoder: Expecting message object of type %s got %s' % (MqttPublishMsg.__name__, mqttPublishMsg.__class__.__name__)) 
@@ -984,17 +1089,14 @@ class MqttEncoder:
     
     def __encodeRemainingLength(self, num):
         remainingLength = ''
-        i = 0
         while 1:
             digit = num % 128
             num /= 128
             if (num > 0):
                 digit |= 0x80
-            else:
-                if(i > 0):
-                    break
-            i = i + 1
             remainingLength += chr(digit) 
+            if(num == 0):
+                    break
         return  remainingLength   
     
     def __encodeIntShort(self, number):  
@@ -1028,7 +1130,7 @@ class MqttMsg:
         self.payload = payload
         
     def toString(self):
-        return '%s[[%s] [variableHeader= %s] [payload= %s]]' % (self.__class__.__name__, self.fixedHeader.toString(), str(self.variableHeader), self.payload)
+        return '%s[[%s] [variableHeader= %s] [payload= %s]]' % (self.__class__.__name__, self.fixedHeader.toString(), str(self.variableHeader), str(self.payload))
         
 
 class MqttConnectMsg(MqttMsg):
