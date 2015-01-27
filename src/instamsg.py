@@ -8,11 +8,15 @@ import os
 INSTAMSG_MAX_BYTES_IN_MSG = 10240
 INSTAMSG_KEEP_ALIVE_TIMER = 60
 INSTAMSG_HOST = "localhost"
+# INSTAMSG_HOST = "api.instamsg.io"
 INSTAMSG_PORT = 1883
 INSTAMSG_PORT_SSL = 8883
-INSTAMSG_HTTP_HOST = 'api.instamsg.io'
-INSTAMSG_HTTP_PORT = 80
+INSTAMSG_HTTP_HOST = "localhost"
+# INSTAMSG_HTTP_HOST = 'api.instamsg.io'
+INSTAMSG_HTTP_PORT = 8600
+# INSTAMSG_HTTP_PORT = 80
 INSTAMSG_HTTPS_PORT = 443
+INSTAMSG_API_VERSION = "beta"
 INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
 INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
 # Logging
@@ -37,6 +41,7 @@ class InstaMsg:
         self.__onConnectCallBack = connectHandler   
         self.__oneToOneMessageHandler = oneToOneMessageHandler
         self.__filesTopic = "instamsg/clients/" + clientId + "/files";
+        self.__fileUploadUrl = "/api/%s/clients/%s/files"%(INSTAMSG_API_VERSION, clientId)
         if(self.__options.has_key('tcp')):
             self.__enableTcp = options.get('tcp')
         else: self.__enableTcp = 1
@@ -64,7 +69,7 @@ class InstaMsg:
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient('InstaMsg', INSTAMSG_HTTP_HOST, httpPort)
+        self.__httpClient = HTTPClient(INSTAMSG_HTTP_HOST, httpPort)
         
     
     def process(self):
@@ -117,14 +122,11 @@ class InstaMsg:
     def send(self, clienId, msg, qos=0, dup=0, replyHandler=None, timeout=INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT):
         try:
             messageId = self._generateMessageId()
-            msg = Message(messageId, clienId, msg, qos, dup,replyTopic= self.__clientId, instaMsg=self)._sendMsgJsonString()
+            msg = Message(messageId, clienId, msg, qos, dup, replyTopic=self.__clientId, instaMsg=self)._sendMsgJsonString()
             self._send(messageId, clienId, msg, qos, dup, replyHandler, timeout)
         except Exception, e:
             raise InstaMsgSendError(str(e))
         
-    def sendFile(self):
-        pass
-    
     def log(self, level, message):
         pass
     
@@ -160,16 +162,83 @@ class InstaMsg:
         if(mqttMsg.topic == self.__clientId):
             self.__handleOneToOneMessage(mqttMsg)
         elif(mqttMsg.topic == self.__filesTopic):
-            pass
+            self.__handleFileTransferMessage(mqttMsg)
         else:
             msg = Message(mqttMsg.messageId, mqttMsg.topic, mqttMsg.payload, mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup)
             msgHandler = self.__msgHandlers.get(mqttMsg.topic)
             if(msgHandler):
                 msgHandler(msg)
                 
+    def __handleFileTransferMessage(self, mqttMsg):
+        msgJson = self.__parseJson(mqttMsg.payload)
+        qos, dup = mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup
+        messageId, replyTopic, method, url, filename = None, None, None, None, None
+        if(msgJson.has_key('reply_to')):
+            replyTopic = msgJson['reply_to']
+        else:
+            raise ValueError("File transfer message json should have reply_to address.")   
+        if(msgJson.has_key('message_id')):
+            messageId = msgJson['message_id']
+        else: 
+            raise ValueError("File transfer message json should have a message_id.") 
+        if(msgJson.has_key('method')):
+            method = msgJson['method']
+        else: 
+            raise ValueError("File transfer message json should have a method.") 
+        if(msgJson.has_key('url')):
+            url = msgJson['url']
+        if(msgJson.has_key('filename')):
+            filename = msgJson['filename']
+        if(replyTopic):
+            if(method == "GET" and not filename):
+                filelist = self.__getFileList()
+                msg = '{"response_id": "%s", "status": 1, "files": %s}' % (messageId, filelist)
+                self.publish(replyTopic, msg, qos, dup)
+            elif (method == "GET" and filename):
+                httpResponse = self.__httpClient.uploadFile(self.__fileUploadUrl, filename, headers={"Authorization":self.__authKey})
+                if(httpResponse and httpResponse.status == 200):
+                    msg = '{"response_id": "%s", "status": 1, "url":"%s"}' % (messageId, httpResponse.body)
+                else:
+                    msg = '{"response_id": "%s", "status": 0}' % (messageId)
+                self.publish(replyTopic, msg, qos, dup)
+            elif ((method == "POST" or method == "PUT") and filename and url):
+                httpResponse = self.__httpClient.downloadFile(url, filename)
+                if(httpResponse and httpResponse.status == 200):
+                    msg = '{"response_id": "%s", "status": 1}' % (messageId)
+                else:
+                    msg = '{"response_id": "%s", "status": 0}' % (messageId)
+                self.publish(replyTopic, msg, qos, dup)
+            elif ((method == "DELETE") and filename):
+                try:
+                    msg = '{"response_id": "%s", "status": 1}' % (messageId)
+                    self.__deleteFile(filename)
+                    self.publish(replyTopic, msg, qos, dup)
+                except Exception, e:
+                    msg = '{"response_id": "%s", "status": 0, "error_msg":"%s"}' % (messageId, str(e))
+                    self.publish(replyTopic, msg, qos, dup)
+                    
+            
+    def __getFileList(self):
+        path = os.path.dirname(os.path.abspath(__file__))
+        fileList = ""
+        for root, dirs, files in os.walk(path):
+            for name in files:
+                filename = os.path.join(root, name)
+                size = os.stat(filename).st_size
+                if(fileList):
+                    fileList = fileList + ","
+                fileList = fileList + '"%s":%d' % (name, size)
+        return '{%s}' % fileList      
+    
+    def __deleteFile(self,filename):
+        path = os.path.dirname(os.path.abspath(__file__))
+        filename = os.path.join(path, filename)
+        os.remove(filename)
+        
+        
     def __handleOneToOneMessage(self, mqttMsg):
         msgJson = self.__parseJson(mqttMsg.payload)
-        messageId, responseId, replyTopic = None, None, None
+        messageId, responseId, replyTopic, status = None, None, None, 1
         if(msgJson.has_key('reply_to')):
             replyTopic = msgJson['reply_to']
         else:
@@ -188,9 +257,13 @@ class InstaMsg:
         if(responseId):
             # This is a response to existing message
             if(status == 0):
-                if(not isinstance(body, list)):
-                    body = (None,body)
-                result = Result(None, 0, body)
+                errorCode, errorMsg = None, None
+                if(isinstance(body, dict)):
+                    if(body.has_key("error_code")):
+                        errorCode = body.get("error_code")
+                    if(body.has_key("error_msg")):
+                        errorMsg = body.get("error_msg")
+                result = Result(None, 0, (errorCode, errorMsg))
             else:
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 result = Result(msg, 1)
@@ -202,11 +275,6 @@ class InstaMsg:
             if(self.__oneToOneMessageHandler):
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 self.__oneToOneMessageHandler(msg)
-                    
-    def __replyToMsg(self, replyTopic, msg, qos, dup=0, responseId = None, replyHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT, errorCode=None):
-        messageId = self.__generateMessageId()
-        replyMsg = self.Message(messageId, replyTopic, msg, qos, dup, responseId =responseId, replyTopic=self.__clientId, replyHandler=replyHandler, timeout=timeout, errorCode=errorCode)
-        self.__sendMsg(replyMsg, replyHandler, timeout)
         
     def __mqttClientOptions(self, username, password, keepAliveTimer):
         if(len(password) > INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % INSTAMSG_MAX_BYTES_IN_MSG)
@@ -277,21 +345,20 @@ class Message:
     def reply(self, msg, dup=0, replyHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__instaMsg and self.__replyTopic):
             msgId = self.__instaMsg._generateMessageId()
-            replyMsgJsonString =  ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": "%s", "status": 1}')%(msgId, self.__id, self.__topic, msg)
+            replyMsgJsonString = ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": "%s", "status": 1}') % (msgId, self.__id, self.__topic, msg)
             self.__instaMsg._send(msgId, self.__replyTopic, replyMsgJsonString, self.__qos, dup, replyHandler, timeout)
-            
     
     def fail(self, errorCode, errorMsg):
         if(self.__instaMsg and self.__replyTopic):
             msgId = self.__instaMsg._generateMessageId()
-            failReplyMsgJsonString =  ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": [%d, %s], "status": 0}')%(msgId, self.__id, self.__topic, errorCode, errorMsg)
+            failReplyMsgJsonString = ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": {"error_code":%d, "error_msg":%s}, "status": 0}') % (msgId, self.__id, self.__topic, errorCode, errorMsg)
             self.__instaMsg._send(msgId, self.__replyTopic, failReplyMsgJsonString, self.__qos, 0, None, 0)
     
     def sendFile(self, fileName, resultHandler, timeout):
         pass
     
     def _sendMsgJsonString(self):
-        return ('{"message_id": "%s", "reply_to": "%s", "body": "%s"}')%(self.__id, self.__replyTopic, self.__body)
+        return ('{"message_id": "%s", "reply_to": "%s", "body": "%s"}') % (self.__id, self.__replyTopic, self.__body)
     
     def toString(self):
         return ('[ id=%s, topic=%s, body=%s, qos=%s, dup=%s, replyTopic=%s]') % (str(self.__id), str(self.__topic), str(self.__body), str(self.__qos), str(self.__dup), str(self.__replyTopic))
@@ -316,9 +383,6 @@ class Result:
     
     def cause(self):
         return self.__cause
-
-
-    
 
 class InstaMsgError(Exception):
     def __init__(self, value=''):
@@ -1327,7 +1391,7 @@ class HTTPResponse:
                     if(self.__state == self.__readingHeaders):
                         self.__readHeaders()
                     if(self.__readingBody):
-                        self.__readBody()   
+                        self.__readBody() 
                         break
                 if(self.__sock is not None):
 #                     data_block = self.__sock.recv()
@@ -1354,7 +1418,7 @@ class HTTPResponse:
         self.length = None
         self.close = None 
         self.headers = {}
-        self.body = []  
+        self.body = ""  
         self.state = self.__readingStatusline
         self.__lines = []
         self.__lastHeader = None
@@ -1447,17 +1511,18 @@ class HTTPResponse:
                         datablock = self.__sock.recv(1500)
                     length = 0
                     while(datablock and length < self.length):
-                        length = length + len(datablock)
                         if(isinstance(datablock, list)):
                             datablock = ''.join(datablock)
+                        length = length + len(datablock)
                         # Only download body to file if status 200
                         if (self.status == 200 and self.f and hasattr(self.f, 'write')):  
                             self.f.write(datablock)
                         else:
                             self.body = self.body + datablock
     #                     datablock = self.__sock.recv()
-                        if(len(self.body) < self.length):
+                        if(length < self.length):
                             datablock = self.__sock.recv(1500)
+                        else: break
                     self.end()
                 else:
                     self.end()
@@ -1510,6 +1575,7 @@ class HTTPClient:
     def downloadFile(self, url, filename, params={}, headers={}, timeout=10):  
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: download filename should be of type str.')
         f = None
+        response = None
         try:
             try:
                 tempFileName = '~' + filename
@@ -1528,6 +1594,7 @@ class HTTPClient:
                 raise HTTPClientError("HTTPClient:: %s" % str(e))
         finally:
             self.__closeFile(f)
+        return response
             
     def __closeFile(self, f):   
         try:
@@ -1569,8 +1636,8 @@ class HTTPClient:
     #                 self._sock = Socket(timeout, 0)
                 self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self._sock.settimeout(timeout)
-    #                 self._sock.connect((self.__addr[0], self.__addr[1]), http=1)
-                self._sock.connect((self.__addr[0], self.__addr[1]))
+    #                 self._sock.connect(self.__addr, http=1)
+                self._sock.connect(self.__addr)
                 expect = None
                 if(headers.has_key('Expect')):
                     expect = headers['Expect']
