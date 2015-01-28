@@ -224,7 +224,7 @@ class InstaMsg:
                     
             
     def __getFileList(self):
-        path = os.path.dirname(os.path.abspath(__file__))
+        path = os.getcwd()
         fileList = ""
         for root, dirs, files in os.walk(path):
             for name in files:
@@ -236,7 +236,7 @@ class InstaMsg:
         return '{%s}' % fileList      
     
     def __deleteFile(self,filename):
-        path = os.path.dirname(os.path.abspath(__file__))
+        path = os.getcwd()
         filename = os.path.join(path, filename)
         os.remove(filename)
         
