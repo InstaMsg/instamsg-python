@@ -6,9 +6,9 @@ import os
 
 ####InstaMsg ###############################################################################
 # Logging Levels
-INSTAMSG_LOG_INFO = 1
-INSTAMSG_LOG_ERR = 2
-INSTAMSG_LOG_DEBUG = 3
+INSTAMSG_LOG_LEVEL_INFO = 1
+INSTAMSG_LOG_LEVEL_ERR = 2
+INSTAMSG_LOG_LEVEL_DEBUG = 3
 # Error codes
 INSTAMSG_ERROR_TIMEOUT = 0
 INSTAMSG_ERROR_NO_HANDLERS = 1
@@ -52,7 +52,7 @@ class InstaMsg:
         else: self.__enableTcp = 1
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
-        self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10}}
+        self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         if(options.has_key('ssl') and options.get('ssl')): 
             port = self.INSTAMSG_PORT_SSL 
             httpPort = self.INSTAMSG_HTTPS_PORT
@@ -138,7 +138,8 @@ class InstaMsg:
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
             if(replyHandler):
-                self.__sendMsgReplyHandlers[messageId] = {'time':time.time(), 'timeout': timeout, 'handler':replyHandler}
+                timeOutMsg = "Sending message[%s] %s to %s timed out." %(str(messageId), str(msg), str(clienId))
+                self.__sendMsgReplyHandlers[messageId] = {'time':time.time(), 'timeout': timeout, 'handler':replyHandler, 'timeOutMsg':timeOutMsg}
                 def _resultHandler(result):
                     if(result.failed()):
                         replyHandler(result)
@@ -315,7 +316,11 @@ class InstaMsg:
     def __processHandlersTimeout(self): 
         for key, value in self.__sendMsgReplyHandlers.items():
             if((time.time() - value['time']) >= value['timeout']):
-                value['handler'] = None
+                resultHandler = value['handler']
+                if(resultHandler):
+                    timeOutMsg = value['timeOutMsg']
+                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT,timeOutMsg)))
+                    value['handler'] = None
                 del self.__sendMsgReplyHandlers[key]
                 
 class Message:
@@ -489,7 +494,7 @@ class MqttClient:
         self.__onMessageCallBack = None
         self.__onDebugMessageCallBack = None
         self.__msgIdInbox = []
-        self.__resultHandlers = {}
+        self.__resultHandlers = {} # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         
     def process(self):
         try:
@@ -553,7 +558,8 @@ class MqttClient:
         if(qos == self.MQTT_QOS0 and resultHandler): 
             resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
         elif (qos > self.MQTT_QOS0 and messageId and resultHandler): 
-            self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
+            timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' %(payload, topic, qos)
+            self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
                 
         
     def subscribe(self, topic, qos, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
@@ -567,7 +573,8 @@ class MqttClient:
         subMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, {'topic':topic, 'qos':qos})
         encodedMsg = self.__mqttEncoder.ecode(subMsg)
         if(resultHandler):
-            self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
+            timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' %(topic, qos)
+            self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
         self.__sendall(encodedMsg)
                 
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
@@ -584,7 +591,8 @@ class MqttClient:
                 unsubMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self.__mqttEncoder.ecode(unsubMsg)
                 if(resultHandler):
-                    self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler}
+                    timeOutMsg = 'Unsubscribe to topics %s timed out.' %str(topics)
+                    self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
                 self.__sendall(encodedMsg)
                 return messageId
         else:   raise TypeError('Topics should be an instance of string or list.') 
@@ -791,7 +799,11 @@ class MqttClient:
     def __processHandlersTimeout(self):
         for key, value in self.__resultHandlers.items():
             if((time.time() - value['time']) >= value['timeout']):
-                value['handler'] = None
+                resultHandler = value['handler']
+                if(resultHandler):
+                    timeOutMsg = value['timeOutMsg']
+                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT,timeOutMsg)))
+                    value['handler'] = None
                 del self.__resultHandlers[key]
                 
     def __sendPingReq(self):
@@ -1338,6 +1350,13 @@ class MqttMsgFactory:
             return MqttUnsubAckMsg(fixedHeader, variableHeader)
         else:
             return None
+
+class MqttClientError(Exception):
+    def __init__(self, value=''):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
+
         
 class MqttFrameError(Exception):
     def __init__(self, value=''):
