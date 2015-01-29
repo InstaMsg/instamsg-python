@@ -3,6 +3,7 @@ import time
 import socket
 import sys
 import os
+import json
 
 ####InstaMsg ###############################################################################
 # Logging Levels
@@ -304,7 +305,12 @@ class InstaMsg:
             else:
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 result = Result(msg, 1)
-            msgHandler = self.__sendMsgReplyHandlers.get(responseId).get('handler')
+            
+            if(self.__sendMsgReplyHandlers.has_key(responseId)):
+                msgHandler = self.__sendMsgReplyHandlers.get(responseId).get('handler')
+            else:
+                msgHandler = None
+                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: No handler for message [messageId=%s responseId=%s]" %(str(messageId), str(responseId)))
             if(msgHandler):
                 msgHandler(result)
                 del self.__sendMsgReplyHandlers[responseId]
@@ -344,7 +350,8 @@ class InstaMsg:
         return (cId, userName)
     
     def __parseJson(self, jsonString):
-        return eval(jsonString)  # Hack as not implemented Json Library
+#         return eval(jsonString)  # Hack as not implemented Json Library
+        return json.loads(jsonString)
     
     def __processHandlersTimeout(self): 
         for key, value in self.__sendMsgReplyHandlers.items():
@@ -555,8 +562,8 @@ class MqttClient:
         try:
             self.__initSock()
             if(self.__connecting is 0 and self.__sockInit):
-                self.__connecting = 1
                 if(not self.__connected):
+                    self.__connecting = 1
                     self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Connecting to %s:%s' % (self.host, str(self.port)))   
                     fixedHeader = MqttFixedHeader(self.CONNECT, qos=0, dup=0, retain=0)
                     connectMsg = self.__mqttMsgFactory.message(fixedHeader, self.options, self.options)
@@ -591,7 +598,7 @@ class MqttClient:
             self.__resetInitSockNConnect()
     
     def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0):
-        if(self.__connecting  or self.__waitingReconnect):
+        if(not self.__connected or self.__connecting  or self.__waitingReconnect):
             raise MqttClientError("Cannot publish message as not connected.")
         self.__validateTopic(topic)
         self.__validateQos(qos)
@@ -610,10 +617,9 @@ class MqttClient:
         elif (qos > self.MQTT_QOS0 and messageId and resultHandler): 
             timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
-                
         
     def subscribe(self, topic, qos, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
-        if(self.__connecting  or self.__waitingReconnect):
+        if(not self.__connected or self.__connecting  or self.__waitingReconnect):
             raise MqttClientError("Cannot subscribe as not connected.")
         self.__validateTopic(topic)
         self.__validateQos(qos)
@@ -630,7 +636,7 @@ class MqttClient:
         self.__sendall(encodedMsg)
                 
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
-        if(self.__connecting  or self.__waitingReconnect):
+        if(not self.__connected or self.__connecting  or self.__waitingReconnect):
             raise MqttClientError("Cannot unsubscribe as not connected.")
         self.__validateResultHandler(resultHandler)
         self.__validateTimeout(resultHandlerTimeout)
@@ -780,10 +786,10 @@ class MqttClient:
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleConnAckMsg(self, mqttMessage):
+        self.__connecting = 0
         connectReturnCode = mqttMessage.connectReturnCode
         if(connectReturnCode == self.CONNECTION_ACCEPTED):
             self.__connected = 1
-            self.__connecting = 0
             self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Connected to %s:%s' % (self.host, str(self.port)))  
             if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         elif(connectReturnCode == self.CONNECTION_REFUSED_UNACCEPTABLE_PROTOCOL_VERSION):
@@ -1146,8 +1152,7 @@ class MqttEncoder:
             encodedVariableHeader = self.__encodeIntShort(len(topic)) + self.__encodeStringUtf8(topic)
             if (fixedHeader.qos > 0): 
                 encodedVariableHeader = encodedVariableHeader + self.__encodeIntShort(mqttPublishMsg.messageId)
-            return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + encodedPayload
-             
+            return self.__encodeFixedHeader(fixedHeader, variableHeaderSize, encodedPayload) + encodedVariableHeader + str(encodedPayload)
         else:
             raise TypeError('MqttEncoder: Expecting message object of type %s got %s' % (MqttPublishMsg.__name__, mqttPublishMsg.__class__.__name__)) 
     
