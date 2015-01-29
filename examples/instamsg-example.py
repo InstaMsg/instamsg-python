@@ -6,7 +6,7 @@ def start(args):
     instaMsg = None
     try:
         try:
-            options={}
+            options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG}
             clientId ="d06f5d10-8091-11e4-bd82-543530e3bc65"
             authKey = "afdlkjghfdjglkjo-094-09k"
             instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
@@ -21,7 +21,6 @@ def start(args):
             instaMsg = None
     
 def __onConnect(instaMsg):
-    print "Client connected to InstaMsg IOT cloud service."
 #     topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
     topic = "subTopic1"
     qos = 0

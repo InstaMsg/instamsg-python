@@ -6,23 +6,26 @@ import os
 
 ####InstaMsg ###############################################################################
 # Logging Levels
+INSTAMSG_LOG_LEVEL_DISABLED = 0
 INSTAMSG_LOG_LEVEL_INFO = 1
-INSTAMSG_LOG_LEVEL_ERR = 2
+INSTAMSG_LOG_LEVEL_ERROR = 2
 INSTAMSG_LOG_LEVEL_DEBUG = 3
+# Logging Level String
+INSTAMSG_LOG_LEVEL = {0:"DISABLED", 1:"INFO", 2:"ERROR", 3:"DEBUG"}
 # Error codes
 INSTAMSG_ERROR_TIMEOUT = 0
 INSTAMSG_ERROR_NO_HANDLERS = 1
 INSTAMSG_ERROR_SOCKET = 2
 INSTAMSG_ERROR_AUTHENTICATION = 3
-#Message QOS
+# Message QOS
 INSTAMSG_QOS0 = 0
 INSTAMSG_QOS1 = 1
 INSTAMSG_QOS2 = 2
 
-
 class InstaMsg:
     INSTAMSG_MAX_BYTES_IN_MSG = 10240
     INSTAMSG_KEEP_ALIVE_TIMER = 60
+    INSTAMSG_RECONNECT_TIMER = 90
     INSTAMSG_HOST = "localhost"
     # INSTAMSG_HOST = "api.instamsg.io"
     INSTAMSG_PORT = 1883
@@ -44,43 +47,57 @@ class InstaMsg:
         self.__authKey = authKey 
         self.__options = options
         self.__onConnectCallBack = connectHandler   
+        self.__onDisConnectCallBack = disConnectHandler  
         self.__oneToOneMessageHandler = oneToOneMessageHandler
         self.__filesTopic = "instamsg/clients/" + clientId + "/files";
-        self.__fileUploadUrl = "/api/%s/clients/%s/files"%(self.INSTAMSG_API_VERSION, clientId)
-        if(self.__options.has_key('tcp')):
-            self.__enableTcp = options.get('tcp')
-        else: self.__enableTcp = 1
+        self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
-        if(options.has_key('ssl') and options.get('ssl')): 
-            port = self.INSTAMSG_PORT_SSL 
-            httpPort = self.INSTAMSG_HTTPS_PORT
-        else: 
-            port = self.INSTAMSG_PORT
-            httpPort = self.INSTAMSG_HTTP_PORT
+        self.__initOptions(options)
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
-            if(options.has_key('keepAliveTimer')):
-                self.__keepAliveTimer = options.get('keepAliveTimer')
-            else:
-                self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
             mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
-            self.__mqttClient = MqttClient(self.INSTAMSG_HOST, port, clientIdAndUsername[0], mqttoptions)
+            self.__mqttClient = MqttClient(self.INSTAMSG_HOST, self.__port, clientIdAndUsername[0], mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
-            self.__mqttClient.onDisconnect(disConnectHandler)
+            self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
             self.__mqttClient.onMessage(self.__handleMessage)
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, httpPort)
+        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort)
         
-    
+    def __initOptions(self, options):
+        if(self.__options.has_key('enableSocket')):
+            self.__enableTcp = options.get('enableSocket')
+        else: self.__enableTcp = 1
+        if(self.__options.has_key('enableLogToServer')):
+            self.__enableLogToServer = options.get('enableLogToServer')
+        else: self.__enableLogToServer = 0
+        if(self.__options.has_key('logLevel')):
+            self.__logLevel = options.get('logLevel')
+            if(self.__logLevel < INSTAMSG_LOG_LEVEL_DISABLED or self.__logLevel > INSTAMSG_LOG_LEVEL_DEBUG):
+                raise ValueError("logLevel option should be in between %d and %d" % (INSTAMSG_LOG_LEVEL_DISABLED, INSTAMSG_LOG_LEVEL_DEBUG))
+        else: self.__logLevel = INSTAMSG_LOG_LEVEL_DISABLED
+        if(options.has_key('keepAliveTimer')):
+            self.__keepAliveTimer = options.get('keepAliveTimer')
+        else:
+            self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
+        if(options.has_key('enableSsl') and options.get('enableSsl')): 
+            self.__port = self.INSTAMSG_PORT_SSL 
+            self.__httpPort = self.INSTAMSG_HTTPS_PORT
+        else: 
+            self.__port = self.INSTAMSG_PORT
+            self.__httpPort = self.INSTAMSG_HTTP_PORT
+        
     def process(self):
-        if(self.__mqttClient):
-            self.__processHandlersTimeout()
-            self.__mqttClient.process()
+        try:
+            if(self.__mqttClient):
+                self.__processHandlersTimeout()
+                self.__mqttClient.process()
+        except Exception, e:
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
     
     def close(self):
         try:
@@ -110,8 +127,10 @@ class InstaMsg:
                     raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
                 self.__mqttClient.subscribe(topic, qos, resultHandler, timeout)
             except Exception, e:
+                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = subscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgSubError(str(e))
         else:
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = subscribe][%s]:: %s" % ("InstaMsgSubError" + str(e)))
             raise InstaMsgSubError("Cannot subscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
             
 
@@ -120,8 +139,10 @@ class InstaMsg:
             try:
                 self.__mqttClient.unsubscribe(topics, resultHandler, timeout)
             except Exception, e:
+                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = unsubscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgUnSubError(str(e))
         else:
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = unsubscribe][%s]:: %s" % ("InstaMsgUnSubError" , str(e)))
             raise InstaMsgUnSubError("Cannot unsubscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
     
     def send(self, clienId, msg, qos=INSTAMSG_QOS0, dup=0, replyHandler=None, timeout=INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT):
@@ -130,6 +151,7 @@ class InstaMsg:
             msg = Message(messageId, clienId, msg, qos, dup, replyTopic=self.__clientId, instaMsg=self)._sendMsgJsonString()
             self._send(messageId, clienId, msg, qos, dup, replyHandler, timeout)
         except Exception, e:
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
             raise InstaMsgSendError(str(e))
         
     def log(self, level, message):
@@ -138,7 +160,7 @@ class InstaMsg:
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
             if(replyHandler):
-                timeOutMsg = "Sending message[%s] %s to %s timed out." %(str(messageId), str(msg), str(clienId))
+                timeOutMsg = "Sending message[%s] %s to %s timed out." % (str(messageId), str(msg), str(clienId))
                 self.__sendMsgReplyHandlers[messageId] = {'time':time.time(), 'timeout': timeout, 'handler':replyHandler, 'timeOutMsg':timeOutMsg}
                 def _resultHandler(result):
                     if(result.failed()):
@@ -159,10 +181,19 @@ class InstaMsg:
         return messageId;
     
     def __onConnect(self, mqttClient):
+        self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         
-    def __handleDebugMessage(self, msg):
-        print msg
+    def __onDisConnect(self):
+        self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client disconnected from InstaMsg IOT cloud service.")
+        if(self.__onDisConnectCallBack): self.__onDisConnectCallBack()  
+        
+    def __handleDebugMessage(self, level, msg):
+        if(level <= self.__logLevel):
+            if(self.__enableLogToServer):
+                self.log(level, msg)
+            else:
+                print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], msg)
     
     def __handleMessage(self, mqttMsg):
         if(mqttMsg.topic == self.__clientId):
@@ -236,7 +267,7 @@ class InstaMsg:
                 fileList = fileList + '"%s":%d' % (name, size)
         return '{%s}' % fileList      
     
-    def __deleteFile(self,filename):
+    def __deleteFile(self, filename):
         path = os.getcwd()
         filename = os.path.join(path, filename)
         os.remove(filename)
@@ -297,6 +328,8 @@ class InstaMsg:
         options['isWillRetain'] = 0
         options['willTopic'] = ""
         options['willMessage'] = ""
+        options['logLevel'] = self.__logLevel
+        options['reconnectTimer'] = self.INSTAMSG_RECONNECT_TIMER
         return options
     
     def __getClientIdAndUsername(self, clientId):
@@ -319,7 +352,7 @@ class InstaMsg:
                 resultHandler = value['handler']
                 if(resultHandler):
                     timeOutMsg = value['timeOutMsg']
-                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT,timeOutMsg)))
+                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
                     value['handler'] = None
                 del self.__sendMsgReplyHandlers[key]
                 
@@ -475,13 +508,15 @@ class MqttClient:
         self.options = options
         self.options['clientId'] = clientId
         self.keepAliveTimer = self.options['keepAliveTimer']
-        self.__debug = options.get('debug') or 0
-        self.__cleanSession = 1;
+        self.reconnectTimer = options['reconnectTimer']
+        self.__logLevel = options.get('logLevel')
+        self.__cleanSession = 1
         self.__sock = None
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
         self.__disconnecting = 0
+        self.__waitingReconnect = 0
         self.__nextConnTry = time.time()
         self.__nextPingReqTime = time.time()
         self.__lastPingRespTime = self.__nextPingReqTime
@@ -494,7 +529,7 @@ class MqttClient:
         self.__onMessageCallBack = None
         self.__onDebugMessageCallBack = None
         self.__msgIdInbox = []
-        self.__resultHandlers = {} # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
+        self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         
     def process(self):
         try:
@@ -504,45 +539,60 @@ class MqttClient:
                     self.__receive()
                     if (self.__nextPingReqTime - time.time() <= 0):
                         if (self.__nextPingReqTime - self.__lastPingRespTime > self.keepAliveTimer):
-    #                         self.disconnect()
-                            pass
+                            self.disconnect()
                         else: self.__sendPingReq()
                 self.__processHandlersTimeout()
 #         except SocketTimeoutError:
 #             pass
 #         except SocketError, msg:
-        except socket.timeout:
-            pass
         except socket.error, msg:
             self.__resetInitSockNConnect()
-            if (self.__debug):
-                self.__log("InstaMsg SocketError in process: %s" % (str(msg)))
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
         except:
-            if (self.__debug):
-                self.__log("InstaMsg Unknown Error in process: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
+            self.__log(INSTAMSG_LOG_LEVEL_ERROR, "[MqttClientError, method = process][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
     
     def connect(self):
-        if(self.__connecting == 0):
-            self.__connecting = 1
+        try:
             self.__initSock()
-            if(not self.__connected):
-                self.__log('MqttClient connecting to %s:%s' % (self.host, str(self.port)))   
-                fixedHeader = MqttFixedHeader(self.CONNECT, qos=0, dup=0, retain=0)
-                connectMsg = self.__mqttMsgFactory.message(fixedHeader, self.options, self.options)
-                encodedMsg = self.__mqttEncoder.ecode(connectMsg)
-                self.__sendall(encodedMsg)
+            if(self.__connecting is 0 and self.__sockInit):
+                self.__connecting = 1
+                if(not self.__connected):
+                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Connecting to %s:%s' % (self.host, str(self.port)))   
+                    fixedHeader = MqttFixedHeader(self.CONNECT, qos=0, dup=0, retain=0)
+                    connectMsg = self.__mqttMsgFactory.message(fixedHeader, self.options, self.options)
+                    encodedMsg = self.__mqttEncoder.ecode(connectMsg)
+                    self.__sendall(encodedMsg)
+#         except SocketTimeoutError:
+#             pass
+#         except SocketError, msg:
+        except socket.timeout:
+            self.__connecting = 0
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
+        except socket.error, msg:
+            self.__resetInitSockNConnect()
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % ( str(msg)))
+        except:
+            self.__connecting = 0
+            self.__log(INSTAMSG_LOG_LEVEL_ERROR, "[MqttClientError, method = connect][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
     
     def disconnect(self):
-        self.__disconnecting = 1
-        fixedHeader = MqttFixedHeader(self.DISCONNECT, qos=0, dup=0, retain=0)
-        disConnectMsg = self.__mqttMsgFactory.message(fixedHeader)
-        encodedMsg = self.__mqttEncoder.ecode(disConnectMsg)
-        self.__sendall(encodedMsg)
-        self.__closeSocket()
-        self.__resetInitSockNConnect()
-        if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
+        try:
+            try:
+                self.__disconnecting = 1
+                if(not self.__connecting  and not self.__waitingReconnect and self.__sockInit):
+                    fixedHeader = MqttFixedHeader(self.DISCONNECT, qos=0, dup=0, retain=0)
+                    disConnectMsg = self.__mqttMsgFactory.message(fixedHeader)
+                    encodedMsg = self.__mqttEncoder.ecode(disConnectMsg)
+                    self.__sendall(encodedMsg)
+            except Exception,msg:
+                self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+        finally:
+            self.__closeSocket()
+            self.__resetInitSockNConnect()
     
     def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0):
+        if(self.__connecting  or self.__waitingReconnect):
+            raise MqttClientError("Cannot publish message as not connected.")
         self.__validateTopic(topic)
         self.__validateQos(qos)
         self.__validateResultHandler(resultHandler)
@@ -558,11 +608,13 @@ class MqttClient:
         if(qos == self.MQTT_QOS0 and resultHandler): 
             resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
         elif (qos > self.MQTT_QOS0 and messageId and resultHandler): 
-            timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' %(payload, topic, qos)
+            timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
                 
         
     def subscribe(self, topic, qos, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
+        if(self.__connecting  or self.__waitingReconnect):
+            raise MqttClientError("Cannot subscribe as not connected.")
         self.__validateTopic(topic)
         self.__validateQos(qos)
         self.__validateResultHandler(resultHandler)
@@ -573,11 +625,13 @@ class MqttClient:
         subMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, {'topic':topic, 'qos':qos})
         encodedMsg = self.__mqttEncoder.ecode(subMsg)
         if(resultHandler):
-            timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' %(topic, qos)
+            timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' % (topic, qos)
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
         self.__sendall(encodedMsg)
                 
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
+        if(self.__connecting  or self.__waitingReconnect):
+            raise MqttClientError("Cannot unsubscribe as not connected.")
         self.__validateResultHandler(resultHandler)
         self.__validateTimeout(resultHandlerTimeout)
         fixedHeader = MqttFixedHeader(self.UNSUBSCRIBE, qos=1, dup=0, retain=0)
@@ -591,7 +645,7 @@ class MqttClient:
                 unsubMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self.__mqttEncoder.ecode(unsubMsg)
                 if(resultHandler):
-                    timeOutMsg = 'Unsubscribe to topics %s timed out.' %str(topics)
+                    timeOutMsg = 'Unsubscribe to topics %s timed out.' % str(topics)
                     self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
                 self.__sendall(encodedMsg)
                 return messageId
@@ -646,15 +700,22 @@ class MqttClient:
         if(resultHandler is not None and not callable(resultHandler)):            
             raise ValueError('Result Handler should be a callable object.') 
             
-    def __log(self, msg):
-        if(self.__onDebugMessageCallBack):
-            self.__onDebugMessageCallBack(msg)
+    def __log(self, level, msg):
+        if(level <= self.__logLevel):
+            if(self.__onDebugMessageCallBack):
+                self.__onDebugMessageCallBack(level, msg)
 
     def __sendall(self, data):
-        if(data):
-            self.__log('EncodedMsg %s' % (data)) 
-            self.__sock.sendall(data)
-            self.__log('EncodedMsg11 %s' % (data)) 
+        try:
+            if(data):
+                self.__sock.sendall(data)
+#         except SocketError, msg:
+#             self.__resetInitSockNConnect()
+#             raise SocketError(str("Socket error in send: %s. Connection reset." % (str(msg))))
+        except socket.error, msg:
+            self.__resetInitSockNConnect()
+            raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
+            
             
     def __receive(self):
         try:
@@ -664,17 +725,15 @@ class MqttClient:
             else:
                 mqttMsg = None
             if (mqttMsg):
-                if (self.__debug):
-                    self.__log('MqttClient:: Received message:%s' % mqttMsg.toString())
+                self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
                 self.__handleMqttMessage(mqttMsg) 
-        except MqttFrameError:
-            self.__resetInitSockNConnect()
-        except MqttDecoderError:
-            pass
-#         except SocketTimeoutError:
-#             pass
+        except MqttDecoderError, msg:
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
         except socket.timeout:
             pass
+        except (MqttFrameError, socket.error), msg:
+            self.__resetInitSockNConnect()
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
             
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
@@ -725,18 +784,18 @@ class MqttClient:
         if(connectReturnCode == self.CONNECTION_ACCEPTED):
             self.__connected = 1
             self.__connecting = 0
-            self.__log('MqttClient connected to %s:%s' % (self.host, str(self.port)))  
+            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Connected to %s:%s' % (self.host, str(self.port)))  
             if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         elif(connectReturnCode == self.CONNECTION_REFUSED_UNACCEPTABLE_PROTOCOL_VERSION):
-            self.__log("CONNECTION_REFUSED_UNACCEPTABLE_PROTOCOL_VERSION")
-        elif(connectReturnCode == self.CONNECTION_REFUSED_IDENTIFIER_REJECTED):  
-            self.__log("CONNECTION_REFUSED_IDENTIFIER_REJECTED")
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Connection refused unacceptable mqtt protocol version.')
+        elif(connectReturnCode == self.CONNECTION_REFUSED_IDENTIFIER_REJECTED):
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Connection refused client identifier rejected.')  
         elif(connectReturnCode == self.CONNECTION_REFUSED_SERVER_UNAVAILABLE):  
-            self.__log("CONNECTION_REFUSED_SERVER_UNAVAILABLE")
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Connection refused server unavailable.')
         elif(connectReturnCode == self.CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD):  
-            self.__log("CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD")
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Connection refused bad username or password.')
         elif(connectReturnCode == self.CONNECTION_REFUSED_NOT_AUTHORIZED):  
-            self.__log("CONNECTION_REFUSED_NOT_AUTHORIZED")
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Connection refused not authorized.')
     
     def __handlePublishMsg(self, mqttMessage):
         if(mqttMessage.fixedHeader.qos > self.MQTT_QOS1): 
@@ -761,29 +820,40 @@ class MqttClient:
         self.__sendall(encodedMsg)
     
     def __resetInitSockNConnect(self):
+        if(self.__sockInit):
+            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Resetting connection due to socket error...')
+            self.__closeSocket()
+            if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
+        
     
     def __initSock(self):
         t = time.time()
 #         if (self.__sockInit is 0 and self.__nextConnTry - t > 0): raise SocketError('Last connection failed. Waiting before retry.')
-        if (self.__sockInit is 0 and self.__nextConnTry - t > 0): raise socket.error('Last connection failed. Waiting before retry.')
-        if (self.__sockInit is 0 and self.__nextConnTry - t <= 0):
-            self.__nextConnTry = t + 90
+        waitFor = self.__nextConnTry - t
+        if (self.__sockInit is 0 and waitFor > 0): 
+            if(not self.__waitingReconnect):
+                self.__waitingReconnect = 1
+                self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: Last connection failed. Waiting  for %d seconds before retry...' % int(waitFor))
+        if (self.__sockInit is 0 and waitFor <= 0):
+            self.__nextConnTry = t + self.reconnectTimer
             if(self.__sock is not None):
-                self.__log('MqttClient closing socket...')
                 self.__closeSocket()
-                self.__log('MqttClient opening socket to %s:%s' % (self.host, str(self.port)))
+                self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Opening socket to %s:%s' % (self.host, str(self.port)))
 #             self.__sock = Socket(10, self.keepAlive)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.__sock.settimeout(10)
             self.__sock.connect((self.host, self.port))
             self.__sockInit = 1
-            self.__log('MqttClient socket opened to %s:%s' % (self.host, str(self.port)))   
+            self.__waitingReconnect = 0
+            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port)))   
+            
     
     def __closeSocket(self):
         try:
+            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Closing socket...')
             if(self.__sock):
                 self.__sock.close()
                 self.__sock = None
@@ -802,7 +872,7 @@ class MqttClient:
                 resultHandler = value['handler']
                 if(resultHandler):
                     timeOutMsg = value['timeOutMsg']
-                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT,timeOutMsg)))
+                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
                     value['handler'] = None
                 del self.__resultHandlers[key]
                 
@@ -1356,8 +1426,7 @@ class MqttClientError(Exception):
         self.value = value
     def __str__(self):
         return repr(self.value)
-
-        
+    
 class MqttFrameError(Exception):
     def __init__(self, value=''):
         self.value = value
