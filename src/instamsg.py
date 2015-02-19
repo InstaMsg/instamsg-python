@@ -310,7 +310,7 @@ class InstaMsg:
                 msgHandler = self.__sendMsgReplyHandlers.get(responseId).get('handler')
             else:
                 msgHandler = None
-                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: No handler for message [messageId=%s responseId=%s]" %(str(messageId), str(responseId)))
+                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: No handler for message [messageId=%s responseId=%s]" % (str(messageId), str(responseId)))
             if(msgHandler):
                 msgHandler(result)
                 del self.__sendMsgReplyHandlers[responseId]
@@ -525,8 +525,8 @@ class MqttClient:
         self.__disconnecting = 0
         self.__waitingReconnect = 0
         self.__nextConnTry = time.time()
-        self.__nextPingReqTime = time.time()
-        self.__lastPingRespTime = self.__nextPingReqTime
+        self.__lastPingReqTime = time.time()
+        self.__lastPingRespTime = self.__lastPingReqTime
         self.__mqttMsgFactory = MqttMsgFactory()
         self.__mqttEncoder = MqttEncoder()
         self.__mqttDecoder = MqttDecoder()
@@ -544,10 +544,13 @@ class MqttClient:
                 self.connect()
                 if(self.__sockInit):
                     self.__receive()
-                    if (self.__nextPingReqTime - time.time() <= 0):
-                        if (self.__nextPingReqTime - self.__lastPingRespTime > self.keepAliveTimer):
+                    if (self.__connected and (self.__lastPingReqTime + self.keepAliveTimer < time.time())):
+                        if (self.__lastPingRespTime is None):
                             self.disconnect()
-                        else: self.__sendPingReq()
+                        else: 
+                            self.__sendPingReq()
+                            self.__lastPingReqTime = time.time()
+                            self.__lastPingRespTime = None
                 self.__processHandlersTimeout()
 #         except SocketTimeoutError:
 #             pass
@@ -577,7 +580,7 @@ class MqttClient:
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
         except socket.error, msg:
             self.__resetInitSockNConnect()
-            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % ( str(msg)))
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
         except:
             self.__connecting = 0
             self.__log(INSTAMSG_LOG_LEVEL_ERROR, "[MqttClientError, method = connect][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
@@ -591,7 +594,7 @@ class MqttClient:
                     disConnectMsg = self.__mqttMsgFactory.message(fixedHeader)
                     encodedMsg = self.__mqttEncoder.ecode(disConnectMsg)
                     self.__sendall(encodedMsg)
-            except Exception,msg:
+            except Exception, msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
         finally:
             self.__closeSocket()
@@ -833,6 +836,8 @@ class MqttClient:
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
+        self.__lastPingReqTime = time.time()
+        self.__lastPingRespTime = self.__lastPingReqTime
         
     
     def __initSock(self):
@@ -887,7 +892,6 @@ class MqttClient:
         pingReqMsg = self.__mqttMsgFactory.message(fixedHeader)
         encodedMsg = self.__mqttEncoder.ecode(pingReqMsg)
         self.__sendall(encodedMsg)
-        self.__nextPingReqTime = time.time() + self.keepAliveTimer
     
 ####Mqtt Codec ###############################################################################
 
@@ -1689,7 +1693,8 @@ class HTTPClient:
                     raise HTTPResponseError(str(e))
                 raise HTTPClientError("HTTPClient:: %s" % str(e))
         finally:
-            self.__closeFile(f)
+            if f:
+                self.__closeFile(f)
         return response
             
     def __closeFile(self, f):   
