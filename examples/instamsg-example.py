@@ -6,9 +6,12 @@ def start(args):
     instaMsg = None
     try:
         try:
-            options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG}
-            clientId ="d06f5d10-8091-11e4-bd82-543530e3bc65"
-            authKey = "afdlkjghfdjglkjo-094-09k"
+#             options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1}
+            options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
+#             clientId ="62513710-86c0-11e4-9dcf-a41f726775dd"
+            authKey = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
+            clientId ="99fb7e20-c7c8-11e4-8ea8-bc764e102b63"
+#             authKey = "password"
             instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
             while 1:
                 instaMsg.process()
@@ -22,12 +25,13 @@ def start(args):
     
 def __onConnect(instaMsg):
 #     topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
-    topic = "subTopic1"
+    topic = "subtopic1"
     qos = 0
     __subscribe(instaMsg, topic, qos)
-    __publishMessage(instaMsg, "32680660-8098-11e4-94ac-543530e3bc65", "cccccccccccc",2, 0)
+    __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd5", "cccccccccccc",2, 0)
     __sendMessage(instaMsg)
-    __publishMessage(instaMsg, "32680660-8098-11e4-94ac-543530e3bc65", "bbbbbbbbbbbb",0, 0)
+    __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd", "bbbbbbbbbbbb",0, 0)
+    __unsubscribe(instaMsg, topic)
     
 def __onDisConnect():
     print "Client disconnected."
@@ -45,6 +49,7 @@ def __subscribe(instaMsg, topic, qos):
 def __publishMessage(instaMsg, topic, msg, qos, dup):
     try:
         def _resultHandler(result):
+            print result
             print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
         instaMsg.publish(topic, msg, qos, dup, _resultHandler)
     except Exception, e:
@@ -69,7 +74,7 @@ def __oneToOneMessageHandler(msg):
         
 def __sendMessage(instaMsg):
     try:
-        clienId = "32680660-8098-11e4-94ac-543530e3bc65"
+        clienId = "92b58550-86c0-11e4-9dcf-a41f726775dd"
         msg= "This is a test send message."
         qos=1
         dup=0

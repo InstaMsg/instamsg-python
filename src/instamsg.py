@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import time
 import socket
+import ssl
+import OpenSSL.crypto
 import sys
 import os
 import json
@@ -27,12 +29,10 @@ class InstaMsg:
     INSTAMSG_MAX_BYTES_IN_MSG = 10240
     INSTAMSG_KEEP_ALIVE_TIMER = 60
     INSTAMSG_RECONNECT_TIMER = 90
-    INSTAMSG_HOST = "localhost"
-    # INSTAMSG_HOST = "api.instamsg.io"
+    INSTAMSG_HOST = "device.instamsg.io"
     INSTAMSG_PORT = 1883
     INSTAMSG_PORT_SSL = 8883
-    INSTAMSG_HTTP_HOST = "localhost"
-    # INSTAMSG_HTTP_HOST = 'api.instamsg.io'
+    INSTAMSG_HTTP_HOST = 'api.instamsg.io'
     INSTAMSG_HTTP_PORT = 8600
     # INSTAMSG_HTTP_PORT = 80
     INSTAMSG_HTTPS_PORT = 443
@@ -855,12 +855,36 @@ class MqttClient:
                 self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Opening socket to %s:%s' % (self.host, str(self.port)))
 #             self.__sock = Socket(10, self.keepAlive)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.__sock.settimeout(10)
-            self.__sock.connect((self.host, self.port))
-            self.__sockInit = 1
-            self.__waitingReconnect = 0
-            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port)))   
             
+            if(self.port == InstaMsg.INSTAMSG_PORT_SSL):
+                self.__sock = ssl.wrap_socket(self.__sock, cert_reqs=ssl.CERT_NONE)
+                self.__sock.settimeout(10)
+                self.__sock.connect((self.host, self.port))
+                commonName = self.__getCommonNameFromCertificate()
+                domain = self.host.split(".")[-2:]
+                domain = ".".join(domain)
+                if(commonName == domain):
+                    self.__sockInit = 1
+                    self.__waitingReconnect = 0
+                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port)))
+                else:
+                    self.__log(INSTAMSG_LOG_LEVEL_ERROR, '[MqttClient]:: Ssl certificate error. Host %s does not match host %s provide in certificate.' % (self.host, commonName))  
+            else:
+                self.__sock.settimeout(10)
+                self.__sock.connect((self.host, self.port))
+                self.__sockInit = 1
+                self.__waitingReconnect = 0
+                self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port))) 
+            
+    def __getCommonNameFromCertificate(self):
+        certDer = self.__sock.getpeercert(binary_form=True)
+        if(certDer is not None):
+            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certDer)
+            return x509.get_subject().commonName
+        return None
+            
+        
+    
     
     def __closeSocket(self):
         try:
@@ -1734,10 +1758,8 @@ class HTTPClient:
                 sizeHint = None
                 if(headers.has_key('Content-Length') and isinstance(body, file)):
                     sizeHint = len(request) + headers.get('Content-Length')
-    #                 self._sock = Socket(timeout, 0)
                 self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self._sock.settimeout(timeout)
-    #                 self._sock.connect(self.__addr, http=1)
                 self._sock.connect(self.__addr)
                 expect = None
                 if(headers.has_key('Expect')):

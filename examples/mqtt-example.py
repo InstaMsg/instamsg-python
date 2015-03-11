@@ -8,18 +8,18 @@ def start(args):
             options['hasUserName'] = 1
             options['hasPassword'] = 1
             options['debug'] = 1
-#             options['username'] = "a41f726775dd"
-#             options['password'] = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
-            options['username'] = "543530e3bc65"
-            options['password'] = "afdlkjghfdjglkjo-094-09k"
+            options['username'] = "a41f726775dd"
+            options['password'] = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
+#             options['username'] = "543530e3bc65"
+#             options['password'] = "afdlkjghfdjglkjo-094-09k"
             options['willTopic'] = "test"
             options['willMessage'] ="test"
             options['isWillRetain'] =0
             options['willQos'] =0
             options['isWillFlag'] =1
             options['keepAliveTimer'] = 60
-#             clientId ="62513710-86c0-11e4-9dcf"
-            clientId ="d06f5d10-8091-11e4-bd82"
+            clientId ="62513710-86c0-11e4-9dcf"
+#             clientId ="d06f5d10-8091-11e4-bd82"
             host = "localhost"
             port =1883
             mqttClient = mqtt.MqttClient(host, port, clientId, options)
@@ -37,11 +37,11 @@ def start(args):
     
 def __onConnect(mqttClient):
     print "Connected"
-#     topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
-    topic = "d06f5d10-8091-11e4-bd82-543530e3bc65"
+    topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
+#     topic = "d06f5d10-8091-11e4-bd82-543530e3bc65"
     qos = 0
     __subscribe(mqttClient, topic, qos)
-    __publishMessage(mqttClient, "32680660-8098-11e4-94ac-543530e3bc65", "cccccccccc",2)
+#     __publishMessage(mqttClient, "32680660-8098-11e4-94ac-543530e3bc65", "cccccccccc",2)
     
 def __debugMessages(msg):
     print msg
@@ -49,7 +49,7 @@ def __debugMessages(msg):
 def __subscribe(mqttClient, topic, qos):
     def _resultHandler(messageId):
         print "Subscribed to topic %s with qos %d" %(topic,0)
-#         mqttClient.publish("92b58550-86c0-11e4-9dcf-a41f726775dd", "cccccccccc",2)
+        mqttClient.publish("92b58550-86c0-11e4-9dcf-a41f726775dd", "cccccccccc",2)
     mqttClient.subscribe(topic, qos, _resultHandler)
     
 def __publishMessage(mqttClient, topic, msg, qos):
