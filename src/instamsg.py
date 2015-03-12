@@ -38,8 +38,7 @@ class InstaMsg:
     INSTAMSG_PORT = 1883
     INSTAMSG_PORT_SSL = 8883
     INSTAMSG_HTTP_HOST = 'api.instamsg.io'
-    INSTAMSG_HTTP_PORT = 8600
-    # INSTAMSG_HTTP_PORT = 80
+    INSTAMSG_HTTP_PORT = 80
     INSTAMSG_HTTPS_PORT = 443
     INSTAMSG_API_VERSION = "beta"
     INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
@@ -72,7 +71,8 @@ class InstaMsg:
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort,self.enableSsl)
+        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort,enableSsl = self.enableSsl)
+        
     def __initOptions(self, options):
         if(self.__options.has_key('enableSocket')):
             self.__enableTcp = options.get('enableSocket')
@@ -90,10 +90,10 @@ class InstaMsg:
         else:
             self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
         
-        self.enableSsl = False 
+        self.enableSsl = 0 
         if(options.has_key('enableSsl') and options.get('enableSsl')): 
             if(HAS_SSL):
-                self.enableSsl = True
+                self.enableSsl = 1
                 self.__port = self.INSTAMSG_PORT_SSL 
                 self.__httpPort = self.INSTAMSG_HTTPS_PORT
             else:
@@ -102,13 +102,6 @@ class InstaMsg:
             self.__port = self.INSTAMSG_PORT
             self.__httpPort = self.INSTAMSG_HTTP_PORT
     
-    def __importSsl(self):  
-        try:
-            import ssl
-            return True
-        except:
-            return False
-      
     def process(self):
         try:
             if(self.__mqttClient):
@@ -250,7 +243,7 @@ class InstaMsg:
                 msg = '{"response_id": "%s", "status": 1, "files": %s}' % (messageId, filelist)
                 self.publish(replyTopic, msg, qos, dup)
             elif (method == "GET" and filename):
-                httpResponse = self.__httpClient.uploadFile(self.__fileUploadUrl, filename, headers={"Authorization":self.__authKey})
+                httpResponse = self.__httpClient.uploadFile(self.__fileUploadUrl, filename, headers={"Authorization":self.__authKey, "ClientId":self.__clientId})
                 if(httpResponse and httpResponse.status == 200):
                     msg = '{"response_id": "%s", "status": 1, "url":"%s"}' % (messageId, httpResponse.body)
                 else:
@@ -1578,7 +1571,7 @@ class HTTPResponse:
                 reason = ""
             except ValueError:
                 version = ""
-        if not version.startswith('HTTP/'):
+        if not version.startswith('HTTP'):
             raise HTTPResponseError("Invalid HTTP version in response")
         try:
             status = int(status)
@@ -1678,7 +1671,7 @@ class HTTPResponse:
     
 class HTTPClient:
         
-    def __init__(self, host, port, userAgent='InstaMsg',enableSsl=False):
+    def __init__(self, host, port, userAgent='InstaMsg',enableSsl=0):
         self.version = '1.1'
         self.__userAgent = userAgent
         self.__addr = (host, port)
@@ -1701,6 +1694,7 @@ class HTTPClient:
         return self.__request('DELETE', url, params, headers, body, timeout) 
         
     def uploadFile(self, url, filename, params={}, headers={}, timeout=10):
+        filename =str(filename)
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: upload filename should be of type str.')
         f = None
         try:
@@ -1780,17 +1774,19 @@ class HTTPClient:
                 sizeHint = None
                 if(headers.has_key('Content-Length') and isinstance(body, file)):
                     sizeHint = len(request) + headers.get('Content-Length')
-                self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self._sock.settimeout(timeout)
-                self._sock.connect(self.__addr)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                if (self.__enableSsl):
+                    self.__sock = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE)
+                self.__sock.settimeout(timeout)
+                self.__sock.connect(self.__addr)
                 expect = None
                 if(headers.has_key('Expect')):
                     expect = headers['Expect']
                 elif(headers.has_key('expect')):
                     expect = headers['expect']
                 if(expect and (expect.lower() == '100-continue')):
-                    self._sock.sendall(request)
-                    httpResponse = HTTPResponse(self._sock, fileObject).response()
+                    self.__sock.sendall(request)
+                    httpResponse = HTTPResponse(self.__sock, fileObject).response()
                     # Send the remaining body if status 100 received or server that send nothing
                     if(httpResponse.status == 100 or httpResponse.status is None):
                         request = ""
@@ -1800,7 +1796,7 @@ class HTTPClient:
                         raise HTTPResponseError("Expecting status 100, recieved %s" % request.status)
                 else:
                     self.__send(request, body, fileUploadForm, fileObject, sizeHint)
-                    return HTTPResponse(self._sock, fileObject).response()
+                    return HTTPResponse(self.__sock, fileObject).response()
             except Exception, e:
                 if(e.__class__.__name__ == 'HTTPResponseError'):
                     raise HTTPResponseError(str(e))
@@ -1817,28 +1813,28 @@ class HTTPClient:
         if (isinstance(body, str) or body is None): 
             request = request + (body or "")
             if(request):
-                self._sock.sendall(request)
+                self.__sock.sendall(request)
         else:
             if(fileUploadForm and len(fileUploadForm) == 2):
                 blocksize = 1500    
                 if(sizeHint <= self.__tcpBufferSize):
                     if hasattr(body, 'read'): 
                         request = request + ''.join(fileUploadForm[0]) + ''.join(body.read(blocksize)) + ''.join(fileUploadForm[1])
-                        self._sock.sendall(request)
+                        self.__sock.sendall(request)
                 else:
                     request = request + ''.join(fileUploadForm[0])
-                    self._sock.sendall(request)
+                    self.__sock.sendall(request)
                     partNumber = 1
                     if hasattr(body, 'read'): 
                         partData = body.read(blocksize)
                         while partData:
-        #                             self._sock.sendMultiPart(partData, partNumber)
-                            self._sock.sendall(partData)
+        #                             self.__sock.sendMultiPart(partData, partNumber)
+                            self.__sock.sendall(partData)
                             partData = body.read(blocksize)
                     if(fileUploadForm and len(fileUploadForm) == 2):
-        #                         self._sock.sendMultiPart(fileUploadForm[1], partNumber + 1)
-                        self._sock.sendall(fileUploadForm[1])
-        #                 self._sock.sendHTTP(self.__addr, request)
+        #                         self.__sock.sendMultiPart(fileUploadForm[1], partNumber + 1)
+                        self.__sock.sendall(fileUploadForm[1])
+        #                 self.__sock.sendHTTP(self.__addr, request)
     
     def __createHttpRequest(self, method, url, params={}, headers={}):
         url = url + self.__createQueryString(params)
@@ -1858,7 +1854,11 @@ class HTTPClient:
         return query
     
     def __createHeaderString(self, headers={}): 
-            headerStr = "HTTP/%s\r\nHost: %s\r\n" % (self.version, self.__addr[0])
+            if(self.__enableSsl):
+                httpScheme= "HTTPS"
+            else:
+                httpScheme= "HTTP"
+            headerStr = "%s/%s\r\nHost: %s\r\n" % (httpScheme, self.version, self.__addr[0])
             headers['Connection'] = 'close'  # Only close is supported
             headers['User-Agent'] = self.__userAgent
             for header, values in headers.items():
