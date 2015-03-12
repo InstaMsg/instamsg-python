@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 import time
 import socket
-import ssl
 import OpenSSL.crypto
 import sys
 import os
 import json
+
+try:
+    import ssl
+    HAS_SSL = True
+except:
+    HAS_SSL=  False
 
 ####InstaMsg ###############################################################################
 # Logging Levels
@@ -67,8 +72,7 @@ class InstaMsg:
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort)
-        
+        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort,self.enableSsl)
     def __initOptions(self, options):
         if(self.__options.has_key('enableSocket')):
             self.__enableTcp = options.get('enableSocket')
@@ -85,13 +89,26 @@ class InstaMsg:
             self.__keepAliveTimer = options.get('keepAliveTimer')
         else:
             self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
+        
+        self.enableSsl = False 
         if(options.has_key('enableSsl') and options.get('enableSsl')): 
-            self.__port = self.INSTAMSG_PORT_SSL 
-            self.__httpPort = self.INSTAMSG_HTTPS_PORT
+            if(HAS_SSL):
+                self.enableSsl = True
+                self.__port = self.INSTAMSG_PORT_SSL 
+                self.__httpPort = self.INSTAMSG_HTTPS_PORT
+            else:
+                raise ImportError("SSL not supported, Please check python version and try again.")
         else: 
             self.__port = self.INSTAMSG_PORT
             self.__httpPort = self.INSTAMSG_HTTP_PORT
-        
+    
+    def __importSsl(self):  
+        try:
+            import ssl
+            return True
+        except:
+            return False
+      
     def process(self):
         try:
             if(self.__mqttClient):
@@ -741,8 +758,12 @@ class MqttClient:
         except socket.timeout:
             pass
         except (MqttFrameError, socket.error), msg:
-            self.__resetInitSockNConnect()
-            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+            if 'timed out' in msg.message.lower():
+                #Hack as ssl library does not throw timeout error
+                pass
+            else:
+                self.__resetInitSockNConnect()
+                self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
             
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
@@ -1657,7 +1678,7 @@ class HTTPResponse:
     
 class HTTPClient:
         
-    def __init__(self, host, port, userAgent='InstaMsg'):
+    def __init__(self, host, port, userAgent='InstaMsg',enableSsl=False):
         self.version = '1.1'
         self.__userAgent = userAgent
         self.__addr = (host, port)
@@ -1665,6 +1686,7 @@ class HTTPClient:
         self.__checkAddress()
         self.__boundary = '-----------ThIs_Is_tHe_bouNdaRY_78564$!@'
         self.__tcpBufferSize = 1500
+        self.__enableSsl =enableSsl
         
     def get(self, url, params={}, headers={}, body=None, timeout=10):
         return self.__request('GET', url, params, headers, body, timeout)
