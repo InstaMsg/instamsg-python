@@ -37,7 +37,7 @@ class InstaMsg:
     INSTAMSG_HOST = "device.instamsg.io"
     INSTAMSG_PORT = 1883
     INSTAMSG_PORT_SSL = 8883
-    INSTAMSG_HTTP_HOST = 'api.instamsg.io'
+    INSTAMSG_HTTP_HOST = 'platform.instamsg.io'
     INSTAMSG_HTTP_PORT = 80
     INSTAMSG_HTTPS_PORT = 443
     INSTAMSG_API_VERSION = "beta"
@@ -770,7 +770,7 @@ class MqttClient:
         elif msgType == self.UNSUBACK:
             self.__handleUnSubAck(mqttMessage)
         elif msgType == self.PUBACK:
-            self.__onPublish(mqttMessage)
+            self.__sendPubAckMsg(mqttMessage)
         elif msgType == self.PUBREC:
             self.__handlePubRecMsg(mqttMessage)
         elif msgType == self.PUBCOMP:
@@ -826,6 +826,13 @@ class MqttClient:
                 self.__msgIdInbox.append(mqttMessage.messageId)
         if(self.__onMessageCallBack):
             self.__onMessageCallBack(mqttMessage)
+
+    def __sendPubAckMsg(self, mqttMessage):
+        fixedHeader = MqttFixedHeader(self.PUBACK)
+        variableHeader = {'messageId': mqttMessage.messageId}
+        pubAckMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
+        encodedMsg = self.__mqttEncoder.ecode(pubAckMsg)
+        self.__sendall(encodedMsg)
             
     def __handlePubRelMsg(self, mqttMessage):
         fixedHeader = MqttFixedHeader(self.PUBCOMP)
@@ -1713,6 +1720,8 @@ class HTTPClient:
             self.__closeFile(f)  
     
     def downloadFile(self, url, filename, params={}, headers={}, timeout=10):  
+        filename =str(filename)
+	url = str(url)
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: download filename should be of type str.')
         f = None
         response = None
@@ -1774,9 +1783,9 @@ class HTTPClient:
                 sizeHint = None
                 if(headers.has_key('Content-Length') and isinstance(body, file)):
                     sizeHint = len(request) + headers.get('Content-Length')
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 if (self.__enableSsl):
-                    self.__sock = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE)
+                    self.__sock = ssl.wrap_socket(self.__sock, cert_reqs=ssl.CERT_NONE)
                 self.__sock.settimeout(timeout)
                 self.__sock.connect(self.__addr)
                 expect = None
