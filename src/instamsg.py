@@ -843,7 +843,7 @@ class MqttClient:
         self.__msgIdInbox.remove(mqttMessage.messageId)
     
     def __handlePubRecMsg(self, mqttMessage):
-        fixedHeader = MqttFixedHeader(self.PUBREL)
+        fixedHeader = MqttFixedHeader(self.PUBREL,1)
         variableHeader = {'messageId': mqttMessage.messageId}
         pubRelMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self.__mqttEncoder.ecode(pubRelMsg)
