@@ -5,6 +5,9 @@ import OpenSSL.crypto
 import sys
 import os
 import json
+from threading import Thread
+from threading import Event
+from threading import RLock
 
 try:
     import ssl
@@ -30,7 +33,7 @@ INSTAMSG_QOS0 = 0
 INSTAMSG_QOS1 = 1
 INSTAMSG_QOS2 = 2
 
-class InstaMsg:
+class InstaMsg(Thread):
     INSTAMSG_MAX_BYTES_IN_MSG = 10240
     INSTAMSG_KEEP_ALIVE_TIMER = 60
     INSTAMSG_RECONNECT_TIMER = 90
@@ -48,6 +51,10 @@ class InstaMsg:
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
         if(not callable(disConnectHandler)): raise ValueError('disConnectHandler should be a callable object.')
         if(not callable(oneToOneMessageHandler)): raise ValueError('oneToOneMessageHandler should be a callable object.')
+        Thread.__init__(self)
+        self.name='InstaMsg Thread'
+        self.alive = Event()
+        self.alive.set()
         self.__clientId = clientId
         self.__authKey = authKey 
         self.__options = options
@@ -102,21 +109,28 @@ class InstaMsg:
             self.__port = self.INSTAMSG_PORT
             self.__httpPort = self.INSTAMSG_HTTP_PORT
     
-    def process(self):
+    def run(self):
         try:
-            if(self.__mqttClient):
-                self.__processHandlersTimeout()
-                self.__mqttClient.process()
-        except Exception, e:
-            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
-    
+            while self.alive.isSet():
+                try:
+                    if(self.__mqttClient):
+                        self.__processHandlersTimeout()
+                        self.__mqttClient.process()
+                except Exception, e:
+                    self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
+        finally:
+            self.close()
+                
     def close(self):
         try:
-            self.__mqttClient.disconnect()
-            self.__mqttClient = None
+            if(self.__mqttClient is not None):
+                self.__mqttClient.disconnect()
+                self.__mqttClient = None
             self.__sendMsgReplyHandlers = None
             self.__msgHandlers = None
             self.__subscribers = None
+            self.alive.clear()
+            self.join()
             return 1
         except:
             return -1
@@ -519,6 +533,7 @@ class MqttClient:
             raise ValueError('host cannot be null.')
         if(not port):
             raise ValueError('port cannot be null.')
+        self.lock = RLock()
         self.host = host
         self.port = port
         self.clientId = clientId
@@ -727,37 +742,43 @@ class MqttClient:
     def __sendall(self, data):
         try:
             if(data):
-                self.__sock.sendall(data)
-#         except SocketError, msg:
-#             self.__resetInitSockNConnect()
-#             raise SocketError(str("Socket error in send: %s. Connection reset." % (str(msg))))
-        except socket.error, msg:
-            self.__resetInitSockNConnect()
-            raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
+                self.lock.acquire()
+                try:
+                        self.__sock.sendall(data)
+                except socket.error, msg:
+                    self.__resetInitSockNConnect()
+                    raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
+        finally:
+            if(data):
+                self.lock.release()
             
             
     def __receive(self):
         try:
-            data = self.__sock.recv(self.MAX_BYTES_MDM_READ)
-            if data: 
-                mqttMsg = self.__mqttDecoder.decode(data)
-            else:
-                mqttMsg = None
-            if (mqttMsg):
-                self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
-                self.__handleMqttMessage(mqttMsg) 
-        except MqttDecoderError, msg:
-            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
-        except socket.timeout:
-            pass
-        except (MqttFrameError, socket.error), msg:
-            if 'timed out' in msg.message.lower():
-                #Hack as ssl library does not throw timeout error
-                pass
-            else:
-                self.__resetInitSockNConnect()
+            self.lock.acquire()
+            try:
+                data = self.__sock.recv(self.MAX_BYTES_MDM_READ)
+                if data: 
+                    mqttMsg = self.__mqttDecoder.decode(data)
+                else:
+                    mqttMsg = None
+                if (mqttMsg):
+                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
+                    self.__handleMqttMessage(mqttMsg) 
+            except MqttDecoderError, msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
-            
+            except socket.timeout:
+                pass
+            except (MqttFrameError, socket.error), msg:
+                if 'timed out' in msg.message.lower():
+                    #Hack as ssl library does not throw timeout error
+                    pass
+                else:
+                    self.__resetInitSockNConnect()
+                    self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+        finally:
+            self.lock.release() 
+           
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
         msgType = mqttMessage.fixedHeader.messageType
@@ -857,6 +878,7 @@ class MqttClient:
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
+        self.__disconnecting = 0
         self.__lastPingReqTime = time.time()
         self.__lastPingRespTime = self.__lastPingReqTime
         
@@ -1721,7 +1743,7 @@ class HTTPClient:
     
     def downloadFile(self, url, filename, params={}, headers={}, timeout=10):  
         filename =str(filename)
-	url = str(url)
+        url = str(url)
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: download filename should be of type str.')
         f = None
         response = None
@@ -1904,5 +1926,3 @@ class HTTPClientError(Exception):
     def __str__(self):
         return repr(self.value)
 
-    
-    

@@ -4,27 +4,18 @@ import time
 
 def start(args):
     instaMsg = None
+    
     try:
-        try:
-#             options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1}
-            options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
-#             clientId ="62513710-86c0-11e4-9dcf-a41f726775dd"
-            authKey = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
-            clientId ="99fb7e20-c7c8-11e4-8ea8-bc764e102b63"
-#             authKey = "password"
-            instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
-            while 1:
-                instaMsg.process()
-                time.sleep(1)
-        except:
-            print("Unknown Error in start: %s %s" %(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
-    finally:
-        if(instaMsg):
-            instaMsg.close()
-            instaMsg = None
+        options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1}
+#         options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
+        clientId ="9533d950-c88b-11e4-bf22-bc764e102b63"
+        authKey = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
+        instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
+        instaMsg.start()
+    except:
+        print("Unknown Error in start: %s %s" %(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
     
 def __onConnect(instaMsg):
-#     topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
     topic = "subtopic1"
     qos = 0
     __subscribe(instaMsg, topic, qos)
@@ -40,8 +31,6 @@ def __subscribe(instaMsg, topic, qos):
     try:
         def _resultHandler(result):
             print "Subscribed to topic %s with qos %d" %(topic,qos)
-    #         print "Unsubscribing from topic %s..." %topic
-    #         __unsubscribe(instaMsg, topic)
         instaMsg.subscribe(topic, qos, __messageHandler, _resultHandler)
     except Exception, e:
         print str(e)
@@ -84,7 +73,6 @@ def __sendMessage(instaMsg):
                 if(replyMessage):
                     print "Message received %s" % replyMessage.toString()
                     replyMessage.reply("This is a reply to a reply.")
-#                     replyMessage.fail(1, "The message failed")
             else:
                 print "Unable to send message errorCode= %d errorMsg=%s" %(result.code[0],result.code[1] )
         instaMsg.send(clienId, msg, qos, dup, _replyHandler, 120)    
