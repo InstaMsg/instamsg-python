@@ -5,9 +5,7 @@ import OpenSSL.crypto
 import sys
 import os
 import json
-from threading import Thread
-from threading import Event
-from threading import RLock
+from threading import Thread, Event, RLock 
 
 try:
     import ssl
@@ -37,7 +35,7 @@ class InstaMsg(Thread):
     INSTAMSG_MAX_BYTES_IN_MSG = 10240
     INSTAMSG_KEEP_ALIVE_TIMER = 60
     INSTAMSG_RECONNECT_TIMER = 90
-    INSTAMSG_HOST = "device.instamsg.io"
+    INSTAMSG_HOST = "localhost"
     INSTAMSG_PORT = 1883
     INSTAMSG_PORT_SSL = 8883
     INSTAMSG_HTTP_HOST = 'platform.instamsg.io'
@@ -63,6 +61,8 @@ class InstaMsg(Thread):
         self.__oneToOneMessageHandler = oneToOneMessageHandler
         self.__filesTopic = "instamsg/clients/" + clientId + "/files";
         self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
+        self.__enableServerLoggingTopic = clientId + "/enableServerLogging";
+        self.__serverLogsTopic =  "instamsg/"+clientId + "/logs";
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
@@ -75,6 +75,7 @@ class InstaMsg(Thread):
             self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
             self.__mqttClient.onMessage(self.__handleMessage)
+            self.__connected =0
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
@@ -117,6 +118,7 @@ class InstaMsg(Thread):
                         self.__processHandlersTimeout()
                         self.__mqttClient.process()
                 except Exception, e:
+                    raise ValueError(str(e))
                     self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
         finally:
             self.close()
@@ -135,10 +137,10 @@ class InstaMsg(Thread):
         except:
             return -1
     
-    def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
+    def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT,logging =1):
         if(topic):
             try:
-                self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout)
+                self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout,logging=logging)
             except Exception, e:
                 raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
@@ -178,9 +180,11 @@ class InstaMsg(Thread):
         except Exception, e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
             raise InstaMsgSendError(str(e))
-        
+     
     def log(self, level, message):
-        pass
+        time.sleep(10)
+        if(self.__connected):
+            self.publish(self.__serverLogsTopic, message, 1, 0, logging=0)
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -205,8 +209,13 @@ class InstaMsg(Thread):
             messageId = time.time()
         return messageId;
     
+    def __enableServerLogging(self,result):
+        self.__enableLogToServer =1
+    
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
+        self.__connected =1
+        self.__mqttClient.subscribe(self.__enableServerLoggingTopic, 1, self.__enableServerLogging)
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         
     def __onDisConnect(self):
@@ -215,7 +224,7 @@ class InstaMsg(Thread):
         
     def __handleDebugMessage(self, level, msg):
         if(level <= self.__logLevel):
-            if(self.__enableLogToServer):
+            if(self.__enableLogToServer and self.__mqttClient.connected()):
                 self.log(level, msg)
             else:
                 print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], msg)
@@ -562,6 +571,7 @@ class MqttClient:
         self.__onDebugMessageCallBack = None
         self.__msgIdInbox = []
         self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
+        self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username']+ "/logs";
         
     def process(self):
         try:
@@ -604,6 +614,7 @@ class MqttClient:
             self.__connecting = 0
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
         except socket.error, msg:
+            self.__disconnecting = 1
             self.__resetInitSockNConnect()
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
         except:
@@ -625,7 +636,7 @@ class MqttClient:
             self.__closeSocket()
             self.__resetInitSockNConnect()
     
-    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0):
+    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0,logging=1):
         if(not self.__connected or self.__connecting  or self.__waitingReconnect):
             raise MqttClientError("Cannot publish message as not connected.")
         self.__validateTopic(topic)
@@ -639,6 +650,8 @@ class MqttClient:
         publishMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, payload)
         encodedMsg = self.__mqttEncoder.ecode(publishMsg)
         self.__sendall(encodedMsg)
+        if(topic != self.__serverLogsTopic):
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, '[MqttClient]:: sending message:%s' % publishMsg.toString())
         self.__validateResultHandler(resultHandler)
         if(qos == self.MQTT_QOS0 and resultHandler): 
             resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
@@ -658,6 +671,7 @@ class MqttClient:
         variableHeader = {'messageId': messageId}
         subMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, {'topic':topic, 'qos':qos})
         encodedMsg = self.__mqttEncoder.ecode(subMsg)
+        self.__onDebugMessageCallBack(1, subMsg.toString())
         if(resultHandler):
             timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' % (topic, qos)
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
@@ -678,6 +692,7 @@ class MqttClient:
                 self.__validateTopic(topic)
                 unsubMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self.__mqttEncoder.ecode(unsubMsg)
+                self.__onDebugMessageCallBack(1,'sending unsubMsg : ' + unsubMsg.toString())
                 if(resultHandler):
                     timeOutMsg = 'Unsubscribe to topics %s timed out.' % str(topics)
                     self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
@@ -691,6 +706,9 @@ class MqttClient:
         else:
             raise ValueError('Callback should be a callable object.')
     
+    def connected(self):
+        return self.__connected  and not self.__disconnecting
+        
     def onDisconnect(self, callback):
         if(callable(callback)):
             self.__onDisconnectCallBack = callback
@@ -744,8 +762,9 @@ class MqttClient:
             if(data):
                 self.lock.acquire()
                 try:
-                        self.__sock.sendall(data)
+                    self.__sock.sendall(data)
                 except socket.error, msg:
+                    self.__disconnecting = 1
                     self.__resetInitSockNConnect()
                     raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
         finally:
@@ -763,7 +782,10 @@ class MqttClient:
                 else:
                     mqttMsg = None
                 if (mqttMsg):
-                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
+                    if(mqttMsg.fixedHeader.messageType == self.PUBLISH and mqttMsg.topic == self.__serverLogsTopic):
+                        pass
+                    else:
+                        self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
                     self.__handleMqttMessage(mqttMsg) 
             except MqttDecoderError, msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
@@ -861,7 +883,8 @@ class MqttClient:
         pubComMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self.__mqttEncoder.ecode(pubComMsg)
         self.__sendall(encodedMsg)
-        self.__msgIdInbox.remove(mqttMessage.messageId)
+        if(mqttMessage.messageId  in self.__msgIdInbox):
+            self.__msgIdInbox.remove(mqttMessage.messageId)
     
     def __handlePubRecMsg(self, mqttMessage):
         fixedHeader = MqttFixedHeader(self.PUBREL,1)
@@ -925,9 +948,6 @@ class MqttClient:
             x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certDer)
             return x509.get_subject().commonName
         return None
-            
-        
-    
     
     def __closeSocket(self):
         try:
@@ -1925,4 +1945,3 @@ class HTTPClientError(Exception):
         self.value = value
     def __str__(self):
         return repr(self.value)
-
