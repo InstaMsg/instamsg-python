@@ -63,6 +63,7 @@ class InstaMsg(Thread):
         self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
         self.__enableServerLoggingTopic = clientId + "/enableServerLogging";
         self.__serverLogsTopic =  "instamsg/"+clientId + "/logs";
+        self.__userClientid = []
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
@@ -209,8 +210,22 @@ class InstaMsg(Thread):
             messageId = time.time()
         return messageId;
     
-    def __enableServerLogging(self,result):
-        self.__enableLogToServer =1
+    
+    def __enableServerLogging(self,msg):
+        if(msg):
+            msgJson = self.__parseJson(msg.body())
+            if(msgJson is not None and( msgJson.has_key('client_id') and msgJson.has_key('logging'))):
+                clientId = msgJson['client_id']
+                logging = msgJson['logging']
+                if(logging):
+                    if(not self.__userClientid.__contains__(clientId)):
+                        self.__userClientid.append(clientId)
+                    self.__enableLogToServer = 1
+                else:
+                    if(self.__userClientid.__contains__(clientId)):
+                        self.__userClientid.remove(clientId)
+                    if(len(self.__userClientid) == 0):
+                        self.__enableLogToServer = 0
     
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
