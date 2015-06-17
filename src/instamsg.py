@@ -587,6 +587,7 @@ class MqttClient:
         self.__msgIdInbox = []
         self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username']+ "/logs";
+        self.__size = 0
         
     def process(self):
         try:
@@ -794,6 +795,9 @@ class MqttClient:
                 data = self.__sock.recv(self.MAX_BYTES_MDM_READ)
                 if data: 
                     mqttMsg = self.__mqttDecoder.decode(data)
+                    self.__size = self.__size + sys.getsizeof(data)
+                    if(self.__size > 1000):
+                        self.__sendReceivedDataSize()                  
                 else:
                     mqttMsg = None
                 if (mqttMsg):
@@ -907,6 +911,10 @@ class MqttClient:
         pubRelMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self.__mqttEncoder.ecode(pubRelMsg)
         self.__sendall(encodedMsg)
+        
+    def __sendReceivedDataSize(self):
+        self.publish("instamsg/client/receiveddata", str({'received_data': self.__size}))
+        self.__size = 0
     
     def __resetInitSockNConnect(self):
         if(self.__sockInit):
