@@ -61,8 +61,8 @@ class InstaMsg(Thread):
         self.__oneToOneMessageHandler = oneToOneMessageHandler
         self.__filesTopic = "instamsg/clients/" + clientId + "/files";
         self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
-        self.__enableServerLoggingTopic = clientId + "/enableServerLogging";
-        self.__serverLogsTopic =  "instamsg/"+clientId + "/logs";
+        self.__enableServerLoggingTopic = "instamsg/clients/" + clientId + "/enableServerLogging";
+        self.__serverLogsTopic =  "instamsg/clients/" + clientId + "/logs";
         self.__userClientid = []
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
@@ -184,8 +184,10 @@ class InstaMsg(Thread):
      
     def log(self, level, message):
         time.sleep(10)
-        if(self.__connected):
+        if(self.__enableLogToServer and self.__mqttClient.connected()):
             self.publish(self.__serverLogsTopic, message, 1, 0, logging=0)
+        else:
+            print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], message)
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -239,10 +241,7 @@ class InstaMsg(Thread):
         
     def __handleDebugMessage(self, level, msg):
         if(level <= self.__logLevel):
-            if(self.__enableLogToServer and self.__mqttClient.connected()):
-                self.log(level, msg)
-            else:
-                print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], msg)
+            self.log(level, msg)
     
     def __handleMessage(self, mqttMsg):
         if(mqttMsg.topic == self.__clientId):
@@ -659,7 +658,7 @@ class MqttClient:
         self.__validateQos(qos)
         self.__validateResultHandler(resultHandler)
         self.__validateTimeout(resultHandlerTimeout)
-        fixedHeader = MqttFixedHeader(self.PUBLISH, qos=self.MQTT_QOS0, dup=0, retain=0)
+        fixedHeader = MqttFixedHeader(self.PUBLISH, qos, dup=0, retain=0)
         messageId = 0
         if(qos > self.MQTT_QOS0): messageId = self.__generateMessageId()
         variableHeader = {'messageId': messageId, 'topic': str(topic)}
@@ -859,8 +858,10 @@ class MqttClient:
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __onPublish(self, mqttMessage):
+        print "MMMMMMMMMMM"
         resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
         if(resultHandler):
+            print "NNNNNNNNNNNNNN"
             resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
@@ -1588,6 +1589,9 @@ class HTTPResponse:
             self.__init()
 #             data_block = self.__sock.recv()
             data_block = self.__sock.recv(1500)
+            print "AAAAAAAaa"
+            print data_block
+            print "AAAAAAAaa"
             while(data_block):
                 self.__lines = self.__lines + data_block.split(self.__crlf)
                 if(len(self.__lines) > 0):
@@ -1636,6 +1640,9 @@ class HTTPResponse:
     def __readStatus(self):
         try:
             statusLine = self.__lines.pop(0)
+            print "BBBBBBBB"
+            print str(self.__lines)
+            print "BBBBBBBBBB"
             [version, status, reason] = statusLine.split(None, 2)
         except ValueError:
             try:
