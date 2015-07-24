@@ -421,7 +421,7 @@ class InstaMsg(Thread):
                 del self.__sendMsgReplyHandlers[key]
     
     def __sendClientSessionData(self):
-        ipAddress = self.__get_ip_address("wlan0")
+        ipAddress = self.get_ip_address("wlan0")
         session = {'method':"wlan0", 'ip_address':ipAddress, 'antina_status': '', 'signal_strength': ''}
         self.publish(self.__sessionTopic, str(session), 1, 0)
 
@@ -431,7 +431,7 @@ class InstaMsg(Thread):
                 'firmware_version':'', 'manufacturer':''}
         self.publish(self.__metadataTopic, str(metadata), 1, 0)
         
-    def __get_ip_address(self,ifname):
+    def get_ip_address(self,ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
             s.fileno(),
@@ -2027,14 +2027,16 @@ class MediaStream:
         try:
             import gst
             import gtk
+            import re
         except ImportError:
             raise Exception("Unable to import required libraries for streaming")
         self.gst = gst
         self.gtk = gtk
+        self.re = re
         self.instamsg = instamsg
         self.uri = uri
         self.streamId= streamId
-        self.ipAddress = ''
+        self.ipAddress = self.instamsg.get_ip_address("wlan0")
         self.port=''
         self.clientId = clientId
         self.__qos=1
@@ -2049,6 +2051,8 @@ class MediaStream:
         self.__subscribe(self.__mediaReplyTopic, self.__qos)
         time.sleep(30)
         self.__publishMediaMessage(self.__mediaTopic)
+        self.__subscribe(self.__mediaPauseTopic, self.__qos)
+        self.__subscribe(self.__mediaStopTopic, self.__qos)
 
     def broadcast(self,sdpAnswer):
         self.__processOffer(sdpAnswer)
@@ -2060,13 +2064,10 @@ class MediaStream:
         self.pipeline.set_state(self.gst.STATE_PAUSED)
         
     def __publishMediaMessage(self,topic, qos=1, dup=0):
-#         ip_address = __get_ip_address("wlan0")
-        ip_address = "192.168.1.13"
-        
         sdpOffer  = "v=0\r\n";
-        sdpOffer += "o=- 0 0 IN IP4 " + ip_address + "\r\n";
+        sdpOffer += "o=- 0 0 IN IP4 " + self.ip_address + "\r\n";
         sdpOffer += "s=\r\n";
-        sdpOffer += "c=IN IP4 " + ip_address + "\r\n";
+        sdpOffer += "c=IN IP4 " + self.ip_address + "\r\n";
         sdpOffer += "t=0 0\r\n";
         sdpOffer += "a=charset:UTF-8\n";
         sdpOffer += "a=recvonly\r\n";
@@ -2089,7 +2090,7 @@ class MediaStream:
                 print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
             self.instamsg.publish(topic, msg, qos, dup, _resultHandler)
         except Exception, e:
-            self.instamsg.log(self.instamsg.INSTAMSG_LOG_LEVEL_DEBUG,e)
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,e)
         
     def __subscribe(self, topic, qos=1):
         try:
@@ -2097,11 +2098,11 @@ class MediaStream:
                 print "Subscribed to topic %s with qos %d" %(topic,qos)
             self.instamsg.subscribe(topic, qos, self.__messageHandler, _resultHandler)
         except Exception, e:
-            self.instamsg.log(self.instamsg.INSTAMSG_LOG_LEVEL_DEBUG,e)
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,e)
             
     def __messageHandler(self,mqttMessage):
         if(mqttMessage):
-            self.instamsg.log(self.instamsg.INSTAMSG_LOG_LEVEL_DEBUG,"Media streamer received message %s" %str(mqttMessage.toString()))
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,"Media streamer received message %s" %str(mqttMessage.toString()))
             if(mqttMessage.topic() == self.__mediaReplyTopic):
                 self.__handleMediaReplyMessage(mqttMessage)
             if(mqttMessage.topic() == self.__mediaPauseTopic):
@@ -2118,13 +2119,11 @@ class MediaStream:
         return json.loads(jsonString)
     
     def __processOffer(self, sdpAnswer):
-        import re
-        
-        isAddress = re.search('o=- 0 (.+?) IN IP4 (.+?)\r\ns=', sdpAnswer)
+        isAddress = self.re.search('o=- 0 (.+?) IN IP4 (.+?)\r\ns=', sdpAnswer)
         if isAddress:
             self.ipAddress = isAddress.group(2)
             
-        isPort = re.search('m=video (.+?) RTP/AVP 96',sdpAnswer)
+        isPort = self.re.search('m=video (.+?) RTP/AVP 96',sdpAnswer)
         if isPort:
             self.port = isPort.group(1)
 
@@ -2133,12 +2132,10 @@ class MediaStream:
     def __createStreamingPipline(self):
         pipe = (self.uri + " !  udpsink host=%s port=%s" %(self.ipAddress, self.port))
         
-        print pipe
-        
         self.pipeline = self.gst.parse_launch(pipe)
 
         self.pipeline.set_state(self.gst.STATE_PLAYING)
         
-        self.instamsg.log(self.instamsg.INSTAMSG_LOG_LEVEL_DEBUG,"Media streamering started on %s" %str(self.port))
+        self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,"Media streamering started on %s" %str(self.port))
         self.gtk.main()
               
