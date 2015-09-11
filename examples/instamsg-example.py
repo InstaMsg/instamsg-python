@@ -6,23 +6,23 @@ def start(args):
     instaMsg = None
     
     try:
-        options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1}
+        options = {'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1, "connectivity": "wlan0", 'manufacturer':'Sony', 'model':'15CNB'}
 #         options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
-        clientId ="9533d950-c88b-11e4-bf22-bc764e102b63"
-        authKey = "AVE5DgIGycSjoiER8k33sIQdPYbJqEe3u"
+        clientId = "57b75b90-4ca4-11e5-837e-bc764e102b63"
+        authKey = "abcd1234%"
         instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
         instaMsg.start()
     except:
-        print("Unknown Error in start: %s %s" %(str(sys.exc_info()[0]),str(sys.exc_info()[1])))
+       print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
     
 def __onConnect(instaMsg):
     topic = "subtopic1"
     qos = 0
-    __subscribe(instaMsg, topic, qos)
-    __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd5", "cccccccccccc",2, 0)
-    __sendMessage(instaMsg)
-    __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd", "bbbbbbbbbbbb",0, 0)
-    __unsubscribe(instaMsg, topic)
+#     __subscribe(instaMsg, topic, qos)
+#     __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd5", "cccccccccccc",2, 0)
+#     __sendMessage(instaMsg)
+#     __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd", "bbbbbbbbbbbb",0, 0)
+#     __unsubscribe(instaMsg, topic)
     
 def __onDisConnect():
     print "Client disconnected."
@@ -30,7 +30,7 @@ def __onDisConnect():
 def __subscribe(instaMsg, topic, qos):
     try:
         def _resultHandler(result):
-            print "Subscribed to topic %s with qos %d" %(topic,qos)
+            print "Subscribed to topic %s with qos %d" % (topic, qos)
         instaMsg.subscribe(topic, qos, __messageHandler, _resultHandler)
     except Exception, e:
         print str(e)
@@ -39,7 +39,7 @@ def __publishMessage(instaMsg, topic, msg, qos, dup):
     try:
         def _resultHandler(result):
             print result
-            print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
+            print "Published message %s to topic %s with qos %d" % (msg, topic, qos)
         instaMsg.publish(topic, msg, qos, dup, _resultHandler)
     except Exception, e:
         print str(e)
@@ -47,14 +47,14 @@ def __publishMessage(instaMsg, topic, msg, qos, dup):
 def __unsubscribe(instaMsg, topic):
     try:
         def _resultHandler(result):
-            print "UnSubscribed from topic %s" %topic
+            print "UnSubscribed from topic %s" % topic
         instaMsg.unsubscribe(topic, _resultHandler)
     except Exception, e:
         print str(e)
         
 def __messageHandler(mqttMessage):
         if(mqttMessage):
-            print "Received message %s" %str(mqttMessage.toString())
+            print "Received message %s" % str(mqttMessage.toString())
         
 def __oneToOneMessageHandler(msg):
     if(msg):
@@ -64,9 +64,9 @@ def __oneToOneMessageHandler(msg):
 def __sendMessage(instaMsg):
     try:
         clienId = "92b58550-86c0-11e4-9dcf-a41f726775dd"
-        msg= "This is a test send message."
-        qos=1
-        dup=0
+        msg = "This is a test send message."
+        qos = 1
+        dup = 0
         def _replyHandler(result):
             if(result.succeeded()):
                 replyMessage = result.result()
@@ -74,7 +74,7 @@ def __sendMessage(instaMsg):
                     print "Message received %s" % replyMessage.toString()
                     replyMessage.reply("This is a reply to a reply.")
             else:
-                print "Unable to send message errorCode= %d errorMsg=%s" %(result.code[0],result.code[1] )
+                print "Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1])
         instaMsg.send(clienId, msg, qos, dup, _replyHandler, 120)    
     except Exception, e:
         print str(e)

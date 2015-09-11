@@ -8,13 +8,19 @@ import json
 import fcntl
 import struct
 from threading import Thread, Event, RLock 
-from duplicity.gpginterface import Pipe
 
 try:
     import ssl
     HAS_SSL = True
 except:
-    HAS_SSL=  False
+    HAS_SSL = False
+    
+try:
+    import subprocess
+    import argparse
+    import re
+except:
+    pass
 
 ####InstaMsg ###############################################################################
 # Logging Levels
@@ -34,11 +40,12 @@ INSTAMSG_QOS0 = 0
 INSTAMSG_QOS1 = 1
 INSTAMSG_QOS2 = 2
 
+
 class InstaMsg(Thread):
     INSTAMSG_MAX_BYTES_IN_MSG = 10240
     INSTAMSG_KEEP_ALIVE_TIMER = 60
     INSTAMSG_RECONNECT_TIMER = 90
-    INSTAMSG_HOST = "localhost"
+    INSTAMSG_HOST = "device.instamsg.io"
     INSTAMSG_PORT = 1883
     INSTAMSG_PORT_SSL = 8883
     INSTAMSG_HTTP_HOST = 'platform.instamsg.io'
@@ -47,13 +54,15 @@ class InstaMsg(Thread):
     INSTAMSG_API_VERSION = "beta"
     INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
     INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
+    INSTAMSG_VERSION = "15.08.00"
+    SIGNAL_PERIODIC_INTERVAL = 900
     
     def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
         if(not callable(disConnectHandler)): raise ValueError('disConnectHandler should be a callable object.')
         if(not callable(oneToOneMessageHandler)): raise ValueError('oneToOneMessageHandler should be a callable object.')
         Thread.__init__(self)
-        self.name='InstaMsg Thread'
+        self.name = 'InstaMsg Thread'
         self.alive = Event()
         self.alive.set()
         self.__clientId = clientId
@@ -65,7 +74,7 @@ class InstaMsg(Thread):
         self.__filesTopic = "instamsg/clients/" + clientId + "/files";
         self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
         self.__enableServerLoggingTopic = "instamsg/clients/" + clientId + "/enableServerLogging";
-        self.__serverLogsTopic =  "instamsg/clients/" + clientId + "/logs";
+        self.__serverLogsTopic = "instamsg/clients/" + clientId + "/logs";
         self.__sessionTopic = "instamsg/client/session"
         self.__metadataTopic = "instamsg/client/metadata"
         self.__rebootTopic = "instamsg/clients/" + clientId + "/reboot"
@@ -73,20 +82,23 @@ class InstaMsg(Thread):
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
+        self.__manufacturer = ""
+        self.__model = ""
+        self.__connectivity = ""
         self.__initOptions(options)
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
-            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
+            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer, self.__connectivity)
             self.__mqttClient = MqttClient(self.INSTAMSG_HOST, self.__port, clientIdAndUsername[0], mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
             self.__mqttClient.onMessage(self.__handleMessage)
-            self.__connected =0
+            self.__connected = 0
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort,enableSsl = self.enableSsl)
+        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
         
     def __initOptions(self, options):
         if(self.__options.has_key('enableSocket')):
@@ -116,6 +128,14 @@ class InstaMsg(Thread):
         else: 
             self.__port = self.INSTAMSG_PORT
             self.__httpPort = self.INSTAMSG_HTTP_PORT
+        if(options.has_key("connectivity")):
+            self.__connectivity = options.get("connectivity");
+        else:
+            self.__connectivity = "eth0"
+        if(options.has_key("manufacturer")):
+            self.__manufacturer = options.get("manufacturer");
+        if(options.has_key("model")):
+            self.__model = options.get("model");
     
     def run(self):
         try:
@@ -144,10 +164,10 @@ class InstaMsg(Thread):
         except:
             return -1
     
-    def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT,logging =1):
+    def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT, logging=1):
         if(topic):
             try:
-                self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout,logging=logging)
+                self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout, logging=logging)
             except Exception, e:
                 raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
@@ -194,6 +214,26 @@ class InstaMsg(Thread):
             self.publish(self.__serverLogsTopic, message, 1, 0, logging=0)
         else:
             print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], message)
+            
+    def get_ip_address(self, ifname):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(),
+            0x8915,  # SIOCGIFADDR
+            struct.pack('256s', ifname[:15])
+        )[20:24])
+        
+    def getSerialNumber(self):
+        cpuserial = "0000000000000000"
+        try:
+            f = open('/proc/cpuinfo', 'r')
+            for line in f:
+                if line[0:6] == 'Serial':
+                    cpuserial = line[10:26]
+            f.close()
+        except:
+            cpuserial = "ERROR00000000000"
+        return cpuserial
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -219,10 +259,10 @@ class InstaMsg(Thread):
         return messageId;
     
     
-    def __enableServerLogging(self,msg):
+    def __enableServerLogging(self, msg):
         if(msg):
             msgJson = self.__parseJson(msg.body())
-            if(msgJson is not None and( msgJson.has_key('client_id') and msgJson.has_key('logging'))):
+            if(msgJson is not None and(msgJson.has_key('client_id') and msgJson.has_key('logging'))):
                 clientId = msgJson['client_id']
                 logging = msgJson['logging']
                 if(logging):
@@ -237,7 +277,7 @@ class InstaMsg(Thread):
     
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
-        self.__connected =1
+        self.__connected = 1
         self.__mqttClient.subscribe(self.__enableServerLoggingTopic, 1, self.__enableServerLogging)
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         self.__sendClientSessionData()
@@ -376,7 +416,7 @@ class InstaMsg(Thread):
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 self.__oneToOneMessageHandler(msg)
         
-    def __mqttClientOptions(self, username, password, keepAliveTimer):
+    def __mqttClientOptions(self, username, password, keepAliveTimer, connectivityMedium):
         if(len(password) > self.INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % self.INSTAMSG_MAX_BYTES_IN_MSG)
         if(keepAliveTimer > 32768 or keepAliveTimer < self.INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % self.INSTAMSG_KEEP_ALIVE_TIMER)
         options = {}
@@ -393,6 +433,8 @@ class InstaMsg(Thread):
         options['willMessage'] = ""
         options['logLevel'] = self.__logLevel
         options['reconnectTimer'] = self.INSTAMSG_RECONNECT_TIMER
+        options['connectivityMedium'] = connectivityMedium
+        options['sendSignalInfoPeriodicInterval'] = self.SIGNAL_PERIODIC_INTERVAL
         return options
     
     def __getClientIdAndUsername(self, clientId):
@@ -421,42 +463,25 @@ class InstaMsg(Thread):
                 del self.__sendMsgReplyHandlers[key]
     
     def __sendClientSessionData(self):
-        ipAddress = self.get_ip_address("wlan0")
-        session = {'method':"wlan0", 'ip_address':ipAddress, 'antina_status': '', 'signal_strength': ''}
+        ipAddress = self.get_ip_address(self.__connectivity) 
+        signalInfo = self.__mqttClient.getSignalInfo()
+        session = {'method':self.__connectivity, 'ip_address':ipAddress, 'antina_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
         self.publish(self.__sessionTopic, str(session), 1, 0)
 
     def __sendClientMetadata(self):
-        imei = self.__getserial()
-        metadata = {'imei': imei,'serial_number': imei, 'model': '',
-                'firmware_version':'', 'manufacturer':''}
+        imei = self.getSerialNumber()
+        metadata = {'imei': imei, 'serial_number': imei, 'model': self.__model,
+                'firmware_version':'', 'manufacturer':self.__manufacturer, 'client_version': self.INSTAMSG_VERSION}
         self.publish(self.__metadataTopic, str(metadata), 1, 0)
         
-    def get_ip_address(self,ifname):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(
-            s.fileno(),
-            0x8915,  # SIOCGIFADDR
-            struct.pack('256s', ifname[:15])
-        )[20:24])
-        
-    def __getserial(self):
-        cpuserial = "0000000000000000"
-        try:
-            f = open('/proc/cpuinfo','r')
-            for line in f:
-                if line[0:6]=='Serial':
-                    cpuserial = line[10:26]
-            f.close()
-        except:
-            cpuserial = "ERROR00000000000"
-        return cpuserial
-                
     def __reboot(self):
         try:
-            self.log(INSTAMSG_LOG_LEVEL_INFO,"Rebooting system.")
+            self.log(INSTAMSG_LOG_LEVEL_INFO, "Rebooting system.")
             os.system("reboot")
         except Exception, e:
             print str(e)
+
+                
             
 class Message:
     def __init__(self, messageId, topic, body, qos=INSTAMSG_QOS0, dup=0, replyTopic=None, instaMsg=None):
@@ -633,8 +658,14 @@ class MqttClient:
         self.__onDebugMessageCallBack = None
         self.__msgIdInbox = []
         self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
-        self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username']+ "/logs";
+        self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username'] + "/logs";
         self.__size = 0
+        self.__connectivity = options['connectivityMedium']
+        self.__sendSignalInfoPeriodicTimer =  time.time()
+        self.__sendSignalInfoInterval = options['sendSignalInfoPeriodicInterval']
+        self.__signalTopic = "instamsg/client/signalinfo"
+        self.__receiveDataTopic = "instamsg/client/receiveddata"
+        
         
     def process(self):
         try:
@@ -649,6 +680,7 @@ class MqttClient:
                             self.__sendPingReq()
                             self.__lastPingReqTime = time.time()
                             self.__lastPingRespTime = None
+                        self.__sendPeriodicSignalInfo()
                 self.__processHandlersTimeout()
 #         except SocketTimeoutError:
 #             pass
@@ -699,7 +731,7 @@ class MqttClient:
             self.__closeSocket()
             self.__resetInitSockNConnect()
     
-    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0,logging=1):
+    def publish(self, topic, payload, qos=MQTT_QOS0, dup=0, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT, retain=0, logging=1):
         if(not self.__connected or self.__connecting  or self.__waitingReconnect):
             raise MqttClientError("Cannot publish message as not connected.")
         self.__validateTopic(topic)
@@ -755,7 +787,7 @@ class MqttClient:
                 self.__validateTopic(topic)
                 unsubMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self.__mqttEncoder.ecode(unsubMsg)
-                self.__onDebugMessageCallBack(1,'sending unsubMsg : ' + unsubMsg.toString())
+                self.__onDebugMessageCallBack(1, 'sending unsubMsg : ' + unsubMsg.toString())
                 if(resultHandler):
                     timeOutMsg = 'Unsubscribe to topics %s timed out.' % str(topics)
                     self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
@@ -789,6 +821,35 @@ class MqttClient:
             self.__onMessageCallBack = callback
         else:
             raise ValueError('Callback should be a callable object.') 
+        
+                
+    def getSignalInfo(self):
+        result = {'link_quality':'', 'signal_Strength':''}
+        try :
+            parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
+            parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
+                        help='wlan interface (default: wlan0)')
+            args = parser.parse_args()
+            cmd = subprocess.Popen('iwconfig %s' % args.interface, shell=True,
+                               stdout=subprocess.PIPE)
+            
+            for line in cmd.stdout:
+                if 'Link Quality' in line:
+                    print line.lstrip(' ')
+                    linkQuality = re.search('Link Quality=(.+? )', line).group(1)
+                    signalLevel = re.search('Signal level=(.*$)', line).group(1)
+                    result = {'antina_status':linkQuality, 'signal_strength':signalLevel}
+                elif 'Not-Associated' in line:
+                    print 'No signal'
+        except Exception, e:
+            print str(e)
+        return result;
+    
+    def __sendPeriodicSignalInfo(self):
+        if (self.__sendSignalInfoPeriodicTimer - time.time() <= 0):
+            signalInfo = self.getSignalInfo()
+            self.publish(self.__signalTopic, str(signalInfo), 1, 0)
+            self.__sendSignalInfoPeriodicTimer = self.__sendSignalInfoPeriodicTimer + self.__sendSignalInfoInterval
         
     def __validateTopic(self, topic):
         if(topic):
@@ -859,7 +920,7 @@ class MqttClient:
                 pass
             except (MqttFrameError, socket.error), msg:
                 if 'timed out' in msg.message.lower():
-                    #Hack as ssl library does not throw timeout error
+                    # Hack as ssl library does not throw timeout error
                     pass
                 else:
                     self.__resetInitSockNConnect()
@@ -953,14 +1014,14 @@ class MqttClient:
             self.__msgIdInbox.remove(mqttMessage.messageId)
     
     def __handlePubRecMsg(self, mqttMessage):
-        fixedHeader = MqttFixedHeader(self.PUBREL,1)
+        fixedHeader = MqttFixedHeader(self.PUBREL, 1)
         variableHeader = {'messageId': mqttMessage.messageId}
         pubRelMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self.__mqttEncoder.ecode(pubRelMsg)
         self.__sendall(encodedMsg)
         
     def __sendReceivedDataSize(self):
-        self.publish("instamsg/client/receiveddata", str({'received_data': self.__size}))
+        self.publish(self.__receiveDataTopic, str({'received_data': self.__size}))
         self.__size = 0
     
     def __resetInitSockNConnect(self):
@@ -1635,9 +1696,6 @@ class HTTPResponse:
             self.__init()
 #             data_block = self.__sock.recv()
             data_block = self.__sock.recv(1500)
-            print "AAAAAAAaa"
-            print data_block
-            print "AAAAAAAaa"
             while(data_block):
                 self.__lines = self.__lines + data_block.split(self.__crlf)
                 if(len(self.__lines) > 0):
@@ -1686,9 +1744,6 @@ class HTTPResponse:
     def __readStatus(self):
         try:
             statusLine = self.__lines.pop(0)
-            print "BBBBBBBB"
-            print str(self.__lines)
-            print "BBBBBBBBBB"
             [version, status, reason] = statusLine.split(None, 2)
         except ValueError:
             try:
@@ -1796,7 +1851,7 @@ class HTTPResponse:
     
 class HTTPClient:
         
-    def __init__(self, host, port, userAgent='InstaMsg',enableSsl=0):
+    def __init__(self, host, port, userAgent='InstaMsg', enableSsl=0):
         self.version = '1.1'
         self.__userAgent = userAgent
         self.__addr = (host, port)
@@ -1804,7 +1859,7 @@ class HTTPClient:
         self.__checkAddress()
         self.__boundary = '-----------ThIs_Is_tHe_bouNdaRY_78564$!@'
         self.__tcpBufferSize = 1500
-        self.__enableSsl =enableSsl
+        self.__enableSsl = enableSsl
         
     def get(self, url, params={}, headers={}, body=None, timeout=10):
         return self.__request('GET', url, params, headers, body, timeout)
@@ -1819,7 +1874,7 @@ class HTTPClient:
         return self.__request('DELETE', url, params, headers, body, timeout) 
         
     def uploadFile(self, url, filename, params={}, headers={}, timeout=10):
-        filename =str(filename)
+        filename = str(filename)
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: upload filename should be of type str.')
         f = None
         try:
@@ -1838,7 +1893,7 @@ class HTTPClient:
             self.__closeFile(f)  
     
     def downloadFile(self, url, filename, params={}, headers={}, timeout=10):  
-        filename =str(filename)
+        filename = str(filename)
         url = str(url)
         if(not isinstance(filename, str)): raise ValueError('HTTPClient:: download filename should be of type str.')
         f = None
@@ -1982,9 +2037,9 @@ class HTTPClient:
     
     def __createHeaderString(self, headers={}): 
             if(self.__enableSsl):
-                httpScheme= "HTTPS"
+                httpScheme = "HTTPS"
             else:
-                httpScheme= "HTTP"
+                httpScheme = "HTTP"
             headerStr = "%s/%s\r\nHost: %s\r\n" % (httpScheme, self.version, self.__addr[0])
             headers['Connection'] = 'close'  # Only close is supported
             headers['User-Agent'] = self.__userAgent
@@ -2023,7 +2078,7 @@ class HTTPClientError(Exception):
         return repr(self.value)
     
 class MediaStream:
-    def __init__(self, instamsg, uri,clientId,streamId=None, options={}):
+    def __init__(self, instamsg, uri, clientId, streamId=None, options={}):
         try:
             import gst
             import gtk
@@ -2035,26 +2090,29 @@ class MediaStream:
         self.re = re
         self.instamsg = instamsg
         self.uri = uri
-        self.streamId= streamId
-        self.ipAddress = self.instamsg.get_ip_address("wlan0")
-        self.port=''
+        self.streamId = streamId
+        self.ipAddress = instamsg.get_ip_address("wlan0")
+        self.port = ''
         self.clientId = clientId
-        self.__qos=1
-        self.__dup=0
+        self.__qos = 1
+        self.__dup = 0
         self.__mediaTopic = "instamsg/clients/" + self.clientId + "/media"
         self.__mediaReplyTopic = "instamsg/clients/" + self.clientId + "/mediareply"
         self.__mediaStopTopic = "instamsg/clients/" + self.clientId + "/mediastop"
         self.__mediaPauseTopic = "instamsg/clients/" + self.clientId + "/mediapause"
+        self.__mediaStreamsTopic = "instamsg/clients/" + self.clientId + "/mediastreams"
         self.__initStreaming()
         
     def __initStreaming(self):
         self.__subscribe(self.__mediaReplyTopic, self.__qos)
         time.sleep(30)
+        
         self.__publishMediaMessage(self.__mediaTopic)
-        self.__subscribe(self.__mediaPauseTopic, self.__qos)
-        self.__subscribe(self.__mediaStopTopic, self.__qos)
+        # self.__subscribe(self.__mediaPauseTopic, self.__qos)
+        # self.__subscribe(self.__mediaStopTopic, self.__qos)
+        self.__subscribe(self.__mediaStreamsTopic, self.__qos)
 
-    def broadcast(self,sdpAnswer):
+    def broadcast(self, sdpAnswer):
         self.__processOffer(sdpAnswer)
 # 
     def stop(self):
@@ -2063,11 +2121,12 @@ class MediaStream:
     def paused(self):
         self.pipeline.set_state(self.gst.STATE_PAUSED)
         
-    def __publishMediaMessage(self,topic, qos=1, dup=0):
-        sdpOffer  = "v=0\r\n";
-        sdpOffer += "o=- 0 0 IN IP4 " + self.ip_address + "\r\n";
+    def __publishMediaMessage(self, topic, qos=1, dup=0):
+        
+        sdpOffer = "v=0\r\n";
+        sdpOffer += "o=- 0 0 IN IP4 " + self.ipAddress + "\r\n";
         sdpOffer += "s=\r\n";
-        sdpOffer += "c=IN IP4 " + self.ip_address + "\r\n";
+        sdpOffer += "c=IN IP4 " + self.ipAddress + "\r\n";
         sdpOffer += "t=0 0\r\n";
         sdpOffer += "a=charset:UTF-8\n";
         sdpOffer += "a=recvonly\r\n";
@@ -2080,6 +2139,7 @@ class MediaStream:
                     'from ': self.clientId,
                     'protocol' : 'rtp',
                     'type':'7',
+                    'stream_id':self.streamId,
                     'record': True
                 }
         self.__publish(topic, str(message), qos, dup)
@@ -2087,35 +2147,62 @@ class MediaStream:
     def __publish(self, topic, msg, qos, dup):
         try:
             def _resultHandler(result):
-                print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
+                print "Published message %s to topic %s with qos %d" % (msg, topic, qos)
             self.instamsg.publish(topic, msg, qos, dup, _resultHandler)
         except Exception, e:
-            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,e)
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
         
     def __subscribe(self, topic, qos=1):
         try:
             def _resultHandler(result):
-                print "Subscribed to topic %s with qos %d" %(topic,qos)
+                print "Subscribed to topic %s with qos %d" % (topic, qos)
             self.instamsg.subscribe(topic, qos, self.__messageHandler, _resultHandler)
         except Exception, e:
-            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,e)
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
             
-    def __messageHandler(self,mqttMessage):
+    def __messageHandler(self, mqttMessage):
         if(mqttMessage):
-            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,"Media streamer received message %s" %str(mqttMessage.toString()))
+            self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Media streamer received message %s" % str(mqttMessage.toString()))
             if(mqttMessage.topic() == self.__mediaReplyTopic):
                 self.__handleMediaReplyMessage(mqttMessage)
             if(mqttMessage.topic() == self.__mediaPauseTopic):
                 self.paused()
             if(mqttMessage.topic() == self.__mediaStopTopic):
                 self.stop()
-                
-    def __handleMediaReplyMessage(self,mqttMessage):
+            if(mqttMessage.topic() == self.__mediaStreamsTopic):
+                self.__handleMediaStremsMessage(mqttMessage)
+    
+    def __handleMediaStremsMessage(self, mqttMsg):
+        msgJson = self.__parseJson(mqttMsg.body())
+        
+        self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, msgJson)
+        messageId, replyTopic, method = None, None, None
+        if(msgJson.has_key('reply_to')):
+            replyTopic = msgJson['reply_to']
+        else:
+            raise ValueError("Media stream message json should have reply_to address.") 
+        if(msgJson.has_key('message_id')):
+            messageId = msgJson['message_id']
+        else: 
+            raise ValueError("Media stream message json should have a message_id.")  
+        if(msgJson.has_key('method')):
+            method = msgJson['method']
+        else: 
+            raise ValueError("Media stream message json should have a method.")
+        if(replyTopic):
+            if(method == "GET"):
+                msg = '{"response_id": "%s", "status": 1, "streams": "%s"}' % (messageId, str(self.streamId))
+                self.__publish(replyTopic, msg, self.__qos, self.__dup)
+        
+               
+    def __handleMediaReplyMessage(self, mqttMessage):
         msgJson = self.__parseJson(mqttMessage.body())
-        if(msgJson is not None and( msgJson.has_key('sdp_answer'))):
+        if(msgJson is not None and(msgJson.has_key('stream_id'))):
+            self.streamId = msgJson['stream_id']
+        if(msgJson is not None and(msgJson.has_key('sdp_answer'))):
             self.broadcast(msgJson['sdp_answer'])
             
-    def __parseJson(self,jsonString):
+    def __parseJson(self, jsonString):
         return json.loads(jsonString)
     
     def __processOffer(self, sdpAnswer):
@@ -2123,19 +2210,22 @@ class MediaStream:
         if isAddress:
             self.ipAddress = isAddress.group(2)
             
-        isPort = self.re.search('m=video (.+?) RTP/AVP 96',sdpAnswer)
+        isPort = self.re.search('m=video (.+?) RTP/AVP 96', sdpAnswer)
         if isPort:
             self.port = isPort.group(1)
 
         self.__createStreamingPipline()
      
     def __createStreamingPipline(self):
-        pipe = (self.uri + " !  udpsink host=%s port=%s" %(self.ipAddress, self.port))
+        pipe = (self.uri + " !  udpsink host=%s port=%s" % (self.ipAddress, self.port))
         
+        time.sleep(30)
         self.pipeline = self.gst.parse_launch(pipe)
 
+        time.sleep(10)
         self.pipeline.set_state(self.gst.STATE_PLAYING)
         
-        self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG,"Media streamering started on %s" %str(self.port))
+        self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Media streaming started on %s" % str(self.port))
+        time.sleep(10)
         self.gtk.main()
               
