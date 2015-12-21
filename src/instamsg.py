@@ -7,6 +7,7 @@ import os
 import json
 import fcntl
 import struct
+import thread
 from threading import Thread, Event, RLock 
 
 try:
@@ -55,7 +56,7 @@ class InstaMsg(Thread):
     INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
     INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
     INSTAMSG_VERSION = "15.08.00"
-    SIGNAL_PERIODIC_INTERVAL = 900
+    SIGNAL_PERIODIC_INTERVAL = 300
     
     def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
@@ -86,6 +87,8 @@ class InstaMsg(Thread):
         self.__model = ""
         self.__connectivity = ""
         self.__initOptions(options)
+        self.ipAddress = ''
+        self.__mediaStream = None
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
             mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer, self.__connectivity)
@@ -141,7 +144,7 @@ class InstaMsg(Thread):
         try:
             while self.alive.isSet():
                 try:
-                    if(self.__mqttClient):
+                    if(self.__mqttClient is not None):
                         self.__processHandlersTimeout()
                         self.__mqttClient.process()
                 except Exception, e:
@@ -172,7 +175,7 @@ class InstaMsg(Thread):
                 raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
     
-    def subscribe(self, topic, qos, msgHandler, resultHandler, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
+    def subscribe(self, topic, qos, msgHandler, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__mqttClient):
             try:
                 if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
@@ -207,15 +210,15 @@ class InstaMsg(Thread):
         except Exception, e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
             raise InstaMsgSendError(str(e))
-     
+        
     def log(self, level, message):
-        time.sleep(10)
         if(self.__enableLogToServer and self.__mqttClient.connected()):
             self.publish(self.__serverLogsTopic, message, 1, 0, logging=0)
         else:
-            print "[%s]%s" % (INSTAMSG_LOG_LEVEL[level], message)
+            timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
+            print "[%s] - [%s] - [%s]%s" % (thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message)
             
-    def get_ip_address(self, ifname):
+    def getIpAddress(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
             s.fileno(),
@@ -234,6 +237,9 @@ class InstaMsg(Thread):
         except:
             cpuserial = "ERROR00000000000"
         return cpuserial
+    
+    def streamVideo(self,mediaUrl,mediaStreamid):
+        self.__mediaStream = MediaStream(self,mediaUrl, self.__clientId,mediaStreamid)
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -259,10 +265,10 @@ class InstaMsg(Thread):
         return messageId;
     
     
-    def __enableServerLogging(self, msg):
+    def __enableServerLogging(self,msg):
         if(msg):
             msgJson = self.__parseJson(msg.body())
-            if(msgJson is not None and(msgJson.has_key('client_id') and msgJson.has_key('logging'))):
+            if(msgJson is not None and( msgJson.has_key('client_id') and msgJson.has_key('logging'))):
                 clientId = msgJson['client_id']
                 logging = msgJson['logging']
                 if(logging):
@@ -278,10 +284,13 @@ class InstaMsg(Thread):
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
         self.__connected = 1
-        self.__mqttClient.subscribe(self.__enableServerLoggingTopic, 1, self.__enableServerLogging)
-        if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
+        self.ipAddress = self.getIpAddress(self.__connectivity)
         self.__sendClientSessionData()
         self.__sendClientMetadata()
+        self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS1, self.__enableServerLogging)
+        time.sleep(30)
+        if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
+        
 
     def __onDisConnect(self):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client disconnected from InstaMsg IOT cloud service.")
@@ -463,9 +472,10 @@ class InstaMsg(Thread):
                 del self.__sendMsgReplyHandlers[key]
     
     def __sendClientSessionData(self):
-        ipAddress = self.get_ip_address(self.__connectivity) 
+        self.ipAddress = self.getIpAddress(self.__connectivity) 
         signalInfo = self.__mqttClient.getSignalInfo()
-        session = {'method':self.__connectivity, 'ip_address':ipAddress, 'antina_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
+        session = {'method':self.__connectivity, 'ip_address':self.ipAddress, 'antina_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
+#         session = {'method' : 'GPRS', 'ip_address' : '100.106.28.23', 'antina_status' : ' 1', 'signal_strength' : '31'}
         self.publish(self.__sessionTopic, str(session), 1, 0)
 
     def __sendClientMetadata(self):
@@ -592,7 +602,7 @@ class MqttClient:
     MQTT_MAX_INT = 65535
     MQTT_RESULT_HANDLER_TIMEOUT = 10
     MQTT_MAX_RESULT_HANDLER_TIMEOUT = 500
-    MAX_BYTES_MDM_READ = 511  # Telit MDM read limit
+    MAX_BYTES_MDM_READ = 1000  # Telit MDM read limit
     MQTT_MAX_TOPIC_LEN = 32767
     MQTT_MAX_PAYLOAD_SIZE = 10000
     # Mqtt Message Types
@@ -659,52 +669,44 @@ class MqttClient:
         self.__msgIdInbox = []
         self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username'] + "/logs";
-        self.__size = 0
         self.__connectivity = options['connectivityMedium']
         self.__sendSignalInfoPeriodicTimer =  time.time()
         self.__sendSignalInfoInterval = options['sendSignalInfoPeriodicInterval']
         self.__signalTopic = "instamsg/client/signalinfo"
-        self.__receiveDataTopic = "instamsg/client/receiveddata"
-        
         
     def process(self):
         try:
             if(not self.__disconnecting):
-                self.connect()
-                if(self.__sockInit):
-                    self.__receive()
-                    if (self.__connected and (self.__lastPingReqTime + self.keepAliveTimer < time.time())):
-                        if (self.__lastPingRespTime is None):
-                            self.disconnect()
-                        else: 
-                            self.__sendPingReq()
-                            self.__lastPingReqTime = time.time()
-                            self.__lastPingRespTime = None
-                        self.__sendPeriodicSignalInfo()
-                self.__processHandlersTimeout()
-#         except SocketTimeoutError:
-#             pass
-#         except SocketError, msg:
+                if(self.__waitingReconnect == 1):
+                        self.connect()
+                        if(self.__sockInit):
+                            self.__receive()
+                            if (self.__connected and (self.__lastPingReqTime + self.keepAliveTimer < time.time())):
+                                if (self.__lastPingRespTime is None):
+                                    self.disconnect()
+                                else: 
+                                    self.__sendPingReq()
+                                    self.__lastPingReqTime = time.time()
+                                    self.__lastPingRespTime = None
+                                self.__sendPeriodicSignalInfo()
+                        self.__processHandlersTimeout()
         except socket.error, msg:
             self.__resetInitSockNConnect()
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
         except:
             self.__log(INSTAMSG_LOG_LEVEL_ERROR, "[MqttClientError, method = process][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
-    
+            
     def connect(self):
         try:
             self.__initSock()
             if(self.__connecting is 0 and self.__sockInit):
                 if(not self.__connected):
                     self.__connecting = 1
-                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Connecting to %s:%s' % (self.host, str(self.port)))   
+                    self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Mqtt Connecting to %s:%s' % (self.host, str(self.port)))   
                     fixedHeader = MqttFixedHeader(self.CONNECT, qos=0, dup=0, retain=0)
                     connectMsg = self.__mqttMsgFactory.message(fixedHeader, self.options, self.options)
                     encodedMsg = self.__mqttEncoder.ecode(connectMsg)
                     self.__sendall(encodedMsg)
-#         except SocketTimeoutError:
-#             pass
-#         except SocketError, msg:
         except socket.timeout:
             self.__connecting = 0
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
@@ -824,7 +826,7 @@ class MqttClient:
         
                 
     def getSignalInfo(self):
-        result = {'link_quality':'', 'signal_Strength':''}
+        result = {'antina_status':'', 'signal_strength':''}
         try :
             parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
             parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
@@ -837,7 +839,7 @@ class MqttClient:
                 if 'Link Quality' in line:
                     print line.lstrip(' ')
                     linkQuality = re.search('Link Quality=(.+? )', line).group(1)
-                    signalLevel = re.search('Signal level=(.*$)', line).group(1)
+                    signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
                     result = {'antina_status':linkQuality, 'signal_strength':signalLevel}
                 elif 'Not-Associated' in line:
                     print 'No signal'
@@ -882,9 +884,9 @@ class MqttClient:
                 self.__onDebugMessageCallBack(level, msg)
 
     def __sendall(self, data):
+        self.lock.acquire()
         try:
             if(data):
-                self.lock.acquire()
                 try:
                     self.__sock.sendall(data)
                 except socket.error, msg:
@@ -892,22 +894,19 @@ class MqttClient:
                     self.__resetInitSockNConnect()
                     raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
         finally:
-            if(data):
-                self.lock.release()
-            
+            self.lock.release()
             
     def __receive(self):
+        self.lock.acquire()
         try:
-            self.lock.acquire()
             try:
                 data = self.__sock.recv(self.MAX_BYTES_MDM_READ)
-                if data: 
+                if (data is not None) and (len(data) > 0): 
                     mqttMsg = self.__mqttDecoder.decode(data)
-                    self.__size = self.__size + sys.getsizeof(data)
-                    if(self.__size > 1000):
-                        self.__sendReceivedDataSize()                  
                 else:
                     mqttMsg = None
+                    self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive]:: No data received.") 
+                    self.__resetInitSockNConnect()
                 if (mqttMsg):
                     if(mqttMsg.fixedHeader.messageType == self.PUBLISH and mqttMsg.topic == self.__serverLogsTopic):
                         pass
@@ -917,6 +916,7 @@ class MqttClient:
             except MqttDecoderError, msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
             except socket.timeout:
+                self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][Socket time out.]")
                 pass
             except (MqttFrameError, socket.error), msg:
                 if 'timed out' in msg.message.lower():
@@ -927,7 +927,7 @@ class MqttClient:
                     self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
         finally:
             self.lock.release() 
-           
+  
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
         msgType = mqttMessage.fixedHeader.messageType
@@ -955,20 +955,29 @@ class MqttClient:
             raise MqttEncoderError('MqttEncoder: Unknown message type.') 
     
     def __handleSubAck(self, mqttMessage):
-        resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
-        if(resultHandler):
+        messageHandler = self.__resultHandlers.get(mqttMessage.messageId)
+        resultHandler = None
+        if(messageHandler is not None):
+            resultHandler = messageHandler.get('handler')
+        if(resultHandler is not None):
             resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleUnSubAck(self, mqttMessage):
-        resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
-        if(resultHandler):
+        messageHandler = self.__resultHandlers.get(mqttMessage.messageId)
+        resultHandler = None
+        if(messageHandler is not None):
+            resultHandler = messageHandler.get('handler')
+        if(resultHandler is not None):
             resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __onPublish(self, mqttMessage):
-        resultHandler = self.__resultHandlers.get(mqttMessage.messageId).get('handler')
-        if(resultHandler):
+        messageHandler = self.__resultHandlers.get(mqttMessage.messageId)
+        resultHandler = None
+        if(messageHandler is not None):
+            resultHandler = messageHandler.get('handler')
+        if(resultHandler is not None):
             resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
@@ -1019,22 +1028,19 @@ class MqttClient:
         pubRelMsg = self.__mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self.__mqttEncoder.ecode(pubRelMsg)
         self.__sendall(encodedMsg)
-        
-    def __sendReceivedDataSize(self):
-        self.publish(self.__receiveDataTopic, str({'received_data': self.__size}))
-        self.__size = 0
     
     def __resetInitSockNConnect(self):
-        if(self.__sockInit):
-            self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Resetting connection due to socket error...')
-            self.__closeSocket()
-            if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
+#         if(self.__sockInit):
+        self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Resetting connection due to socket error...')
+        self.__closeSocket()
+        if(self.__onDisconnectCallBack): self.__onDisconnectCallBack()
         self.__sockInit = 0
         self.__connected = 0
         self.__connecting = 0
         self.__disconnecting = 0
         self.__lastPingReqTime = time.time()
         self.__lastPingRespTime = self.__lastPingReqTime
+        self.connect()
         
     
     def __initSock(self):
@@ -1052,6 +1058,8 @@ class MqttClient:
                 self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Opening socket to %s:%s' % (self.host, str(self.port)))
 #             self.__sock = Socket(10, self.keepAlive)
             self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#             self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#             self.__sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             
             if(self.port == InstaMsg.INSTAMSG_PORT_SSL):
                 self.__sock = ssl.wrap_socket(self.__sock, cert_reqs=ssl.CERT_NONE)
@@ -2077,21 +2085,27 @@ class HTTPClientError(Exception):
     def __str__(self):
         return repr(self.value)
     
-class MediaStream:
+class MediaStream(Thread):
+    
     def __init__(self, instamsg, uri, clientId, streamId=None, options={}):
         try:
             import gst
-            import gtk
             import re
         except ImportError:
             raise Exception("Unable to import required libraries for streaming")
+        
+        Thread.__init__(self)
+        self.name = 'InstaMsg Thread'
+        self.alive = Event()
+        self.alive.set()
+        
         self.gst = gst
-        self.gtk = gtk
         self.re = re
         self.instamsg = instamsg
         self.uri = uri
-        self.streamId = streamId
-        self.ipAddress = instamsg.get_ip_address("wlan0")
+        self.streamId = streamId;
+        self.streamIds =[]
+        self.ipAddress = instamsg.ipAddress
         self.port = ''
         self.clientId = clientId
         self.__qos = 1
@@ -2103,21 +2117,27 @@ class MediaStream:
         self.__mediaStreamsTopic = "instamsg/clients/" + self.clientId + "/mediastreams"
         self.__initStreaming()
         
+  
+        
     def __initStreaming(self):
         self.__subscribe(self.__mediaReplyTopic, self.__qos)
         time.sleep(30)
         
         self.__publishMediaMessage(self.__mediaTopic)
         # self.__subscribe(self.__mediaPauseTopic, self.__qos)
-        # self.__subscribe(self.__mediaStopTopic, self.__qos)
+        self.__subscribe(self.__mediaStopTopic, self.__qos)
         self.__subscribe(self.__mediaStreamsTopic, self.__qos)
 
     def broadcast(self, sdpAnswer):
         self.__processOffer(sdpAnswer)
-# 
+ 
     def stop(self):
-        self.pipeline.set_state(self.pipeline.set_state(self.gst.STATE_NULL))
-#    
+        if (self.pipeline):
+                self.pipeline.set_state(self.pipeline.set_state(self.gst.STATE_NULL))
+                self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Stopping stream and stream id is %s" % str(self.streamId))
+        message = {'to':self.clientId,'from':self.clientId,'type':3,'stream_id': self.streamId}
+        self.__publish(self.__mediaTopic, str(message), self.__qos, self.__dup)
+    
     def paused(self):
         self.pipeline.set_state(self.gst.STATE_PAUSED)
         
@@ -2136,7 +2156,7 @@ class MediaStream:
         message = {
                     'to': self.clientId,
                     'sdp_offer' : sdpOffer,
-                    'from ': self.clientId,
+                    'from': self.clientId,
                     'protocol' : 'rtp',
                     'type':'7',
                     'stream_id':self.streamId,
@@ -2147,7 +2167,7 @@ class MediaStream:
     def __publish(self, topic, msg, qos, dup):
         try:
             def _resultHandler(result):
-                print "Published message %s to topic %s with qos %d" % (msg, topic, qos)
+                self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Published message %s to topic %s with qos %d" % (msg, topic, qos))
             self.instamsg.publish(topic, msg, qos, dup, _resultHandler)
         except Exception, e:
             self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
@@ -2155,7 +2175,7 @@ class MediaStream:
     def __subscribe(self, topic, qos=1):
         try:
             def _resultHandler(result):
-                print "Subscribed to topic %s with qos %d" % (topic, qos)
+                self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Subscribed to topic %s with qos %d" % (topic, qos))
             self.instamsg.subscribe(topic, qos, self.__messageHandler, _resultHandler)
         except Exception, e:
             self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
@@ -2191,7 +2211,7 @@ class MediaStream:
             raise ValueError("Media stream message json should have a method.")
         if(replyTopic):
             if(method == "GET"):
-                msg = '{"response_id": "%s", "status": 1, "streams": "%s"}' % (messageId, str(self.streamId))
+                msg = '{"response_id": "%s", "status": 1, "streams": "%s"}' % (messageId, str(self.streamIds))
                 self.__publish(replyTopic, msg, self.__qos, self.__dup)
         
                
@@ -2199,6 +2219,7 @@ class MediaStream:
         msgJson = self.__parseJson(mqttMessage.body())
         if(msgJson is not None and(msgJson.has_key('stream_id'))):
             self.streamId = msgJson['stream_id']
+            self.streamIds.append(self.streamId)
         if(msgJson is not None and(msgJson.has_key('sdp_answer'))):
             self.broadcast(msgJson['sdp_answer'])
             
@@ -2217,15 +2238,13 @@ class MediaStream:
         self.__createStreamingPipline()
      
     def __createStreamingPipline(self):
-        pipe = (self.uri + " !  udpsink host=%s port=%s" % (self.ipAddress, self.port))
+        add = "23.253.42.123"
+        pipe = (self.uri + " !  udpsink host=%s port=%s" % (add, self.port))
         
-        time.sleep(30)
+        self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Stream uri is  %s" % str(pipe))
         self.pipeline = self.gst.parse_launch(pipe)
-
-        time.sleep(10)
+ 
         self.pipeline.set_state(self.gst.STATE_PLAYING)
-        
         self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Media streaming started on %s" % str(self.port))
-        time.sleep(10)
-        self.gtk.main()
+
               
