@@ -677,19 +677,19 @@ class MqttClient:
     def process(self):
         try:
             if(not self.__disconnecting):
-                if(self.__waitingReconnect == 1):
-                        self.connect()
-                        if(self.__sockInit):
-                            self.__receive()
-                            if (self.__connected and (self.__lastPingReqTime + self.keepAliveTimer < time.time())):
-                                if (self.__lastPingRespTime is None):
-                                    self.disconnect()
-                                else: 
-                                    self.__sendPingReq()
-                                    self.__lastPingReqTime = time.time()
-                                    self.__lastPingRespTime = None
-                                self.__sendPeriodicSignalInfo()
-                        self.__processHandlersTimeout()
+		if(self.__waitingReconnect == 1):
+                    self.connect()
+                if(self.__sockInit):
+                    self.__receive()
+                    if (self.__connected and (self.__lastPingReqTime + self.keepAliveTimer < time.time())):
+                        if (self.__lastPingRespTime is None):
+                            self.disconnect()
+                        else: 
+                            self.__sendPingReq()
+                            self.__lastPingReqTime = time.time()
+                            self.__lastPingRespTime = None
+                        self.__sendPeriodicSignalInfo()
+                self.__processHandlersTimeout()
         except socket.error, msg:
             self.__resetInitSockNConnect()
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
