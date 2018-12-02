@@ -1,9 +1,4 @@
-import os,sys
-from pathlib import Path
-print 
-sys.path.append(Path(__file__).absolute().parent.absolute().parent / '../instamsg')
-
-import instamsg
+from instamsg import instamsg
 import sys
 import time
 
@@ -28,6 +23,20 @@ def __onConnect(instaMsg):
 #     __sendMessage(instaMsg)
 #     __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd", "bbbbbbbbbbbb",0, 0)
 #     __unsubscribe(instaMsg, topic)
+    print ("publish message")
+    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash1",1, 0)
+    time.sleep(60)
+    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash2",1, 0)
+    time.sleep(60)
+
+    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash3",1, 0)
+    time.sleep(60)
+
+    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash4",1, 0)
+    time.sleep(60)
+ 
+    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash5",1, 0)
+    time.sleep(60)
     
 def __onDisConnect():
     print ("Client disconnected.")
