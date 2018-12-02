@@ -7,7 +7,7 @@ import os
 import json
 import fcntl
 import struct
-import thread
+import _thread
 from threading import Thread, Event, RLock 
 
 try:
@@ -55,7 +55,7 @@ class InstaMsg(Thread):
     INSTAMSG_API_VERSION = "beta"
     INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
     INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
-    INSTAMSG_VERSION = "15.08.00"
+    INSTAMSG_VERSION = "1.00.00"
     SIGNAL_PERIODIC_INTERVAL = 300
     
     def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
@@ -104,24 +104,24 @@ class InstaMsg(Thread):
         self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
         
     def __initOptions(self, options):
-        if(self.__options.has_key('enableSocket')):
+        if('enableSocket' in self.__options):
             self.__enableTcp = options.get('enableSocket')
         else: self.__enableTcp = 1
-        if(self.__options.has_key('enableLogToServer')):
+        if('enableLogToServer' in self.__options):
             self.__enableLogToServer = options.get('enableLogToServer')
         else: self.__enableLogToServer = 0
-        if(self.__options.has_key('logLevel')):
+        if('logLevel' in self.__options):
             self.__logLevel = options.get('logLevel')
             if(self.__logLevel < INSTAMSG_LOG_LEVEL_DISABLED or self.__logLevel > INSTAMSG_LOG_LEVEL_DEBUG):
                 raise ValueError("logLevel option should be in between %d and %d" % (INSTAMSG_LOG_LEVEL_DISABLED, INSTAMSG_LOG_LEVEL_DEBUG))
         else: self.__logLevel = INSTAMSG_LOG_LEVEL_DISABLED
-        if(options.has_key('keepAliveTimer')):
+        if('keepAliveTimer' in options):
             self.__keepAliveTimer = options.get('keepAliveTimer')
         else:
             self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
         
         self.enableSsl = 0 
-        if(options.has_key('enableSsl') and options.get('enableSsl')): 
+        if('enableSsl' in options and options.get('enableSsl')): 
             if(HAS_SSL):
                 self.enableSsl = 1
                 self.__port = self.INSTAMSG_PORT_SSL 
@@ -131,13 +131,13 @@ class InstaMsg(Thread):
         else: 
             self.__port = self.INSTAMSG_PORT
             self.__httpPort = self.INSTAMSG_HTTP_PORT
-        if(options.has_key("connectivity")):
+        if("connectivity" in options):
             self.__connectivity = options.get("connectivity");
         else:
             self.__connectivity = "eth0"
-        if(options.has_key("manufacturer")):
+        if("manufacturer" in options):
             self.__manufacturer = options.get("manufacturer");
-        if(options.has_key("model")):
+        if("model" in options):
             self.__model = options.get("model");
     
     def run(self):
@@ -147,7 +147,7 @@ class InstaMsg(Thread):
                     if(self.__mqttClient is not None):
                         self.__processHandlersTimeout()
                         self.__mqttClient.process()
-                except Exception, e:
+                except Exception as e:
                     raise ValueError(str(e))
                     self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
         finally:
@@ -171,7 +171,7 @@ class InstaMsg(Thread):
         if(topic):
             try:
                 self.__mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout, logging=logging)
-            except Exception, e:
+            except Exception as e:
                 raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
     
@@ -183,7 +183,7 @@ class InstaMsg(Thread):
                 if(topic == self.__clientId):
                     raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
                 self.__mqttClient.subscribe(topic, qos, resultHandler, timeout)
-            except Exception, e:
+            except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = subscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgSubError(str(e))
         else:
@@ -195,7 +195,7 @@ class InstaMsg(Thread):
         if(self.__mqttClient):
             try:
                 self.__mqttClient.unsubscribe(topics, resultHandler, timeout)
-            except Exception, e:
+            except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = unsubscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgUnSubError(str(e))
         else:
@@ -207,7 +207,7 @@ class InstaMsg(Thread):
             messageId = self._generateMessageId()
             msg = Message(messageId, clienId, msg, qos, dup, replyTopic=self.__clientId, instaMsg=self)._sendMsgJsonString()
             self._send(messageId, clienId, msg, qos, dup, replyHandler, timeout)
-        except Exception, e:
+        except Exception as e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
             raise InstaMsgSendError(str(e))
         
@@ -216,14 +216,14 @@ class InstaMsg(Thread):
             self.publish(self.__serverLogsTopic, message, 1, 0, logging=0)
         else:
             timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
-            print "[%s] - [%s] - [%s]%s" % (thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message)
+            print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
             
     def getIpAddress(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
             s.fileno(),
             0x8915,  # SIOCGIFADDR
-            struct.pack('256s', ifname[:15])
+            struct.pack('256s', bytes(ifname[:15], 'utf-8'))
         )[20:24])
         
     def getSerialNumber(self):
@@ -253,14 +253,14 @@ class InstaMsg(Thread):
             else:
                 _resultHandler = None
             self.publish(clienId, msg, qos, dup, _resultHandler)
-        except Exception, e:
-            if(self.__sendMsgReplyHandlers.has_key(messageId)):
+        except Exception as e:
+            if(messageId in self.__sendMsgReplyHandlers):
                 del self.__sendMsgReplyHandlers[messageId]
             raise Exception(str(e))
             
     def _generateMessageId(self):
         messageId = self.__clientId + "-" + str(int(time.time() * 1000))
-        while(self.__sendMsgReplyHandlers.has_key(messageId)):
+        while(messageId in self.__sendMsgReplyHandlers):
             messageId = time.time()
         return messageId;
     
@@ -268,7 +268,7 @@ class InstaMsg(Thread):
     def __enableServerLogging(self,msg):
         if(msg):
             msgJson = self.__parseJson(msg.body())
-            if(msgJson is not None and( msgJson.has_key('client_id') and msgJson.has_key('logging'))):
+            if(msgJson is not None and( 'client_id' in msgJson and 'logging' in msgJson)):
                 clientId = msgJson['client_id']
                 logging = msgJson['logging']
                 if(logging):
@@ -317,21 +317,21 @@ class InstaMsg(Thread):
         msgJson = self.__parseJson(mqttMsg.payload)
         qos, dup = mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup
         messageId, replyTopic, method, url, filename = None, None, None, None, None
-        if(msgJson.has_key('reply_to')):
+        if('reply_to' in msgJson):
             replyTopic = msgJson['reply_to']
         else:
             raise ValueError("File transfer message json should have reply_to address.")   
-        if(msgJson.has_key('message_id')):
+        if('message_id' in msgJson):
             messageId = msgJson['message_id']
         else: 
             raise ValueError("File transfer message json should have a message_id.") 
-        if(msgJson.has_key('method')):
+        if('method' in msgJson):
             method = msgJson['method']
         else: 
             raise ValueError("File transfer message json should have a method.") 
-        if(msgJson.has_key('url')):
+        if('url' in msgJson):
             url = msgJson['url']
-        if(msgJson.has_key('filename')):
+        if('filename' in msgJson):
             filename = msgJson['filename']
         if(replyTopic):
             if(method == "GET" and not filename):
@@ -357,7 +357,7 @@ class InstaMsg(Thread):
                     msg = '{"response_id": "%s", "status": 1}' % (messageId)
                     self.__deleteFile(filename)
                     self.publish(replyTopic, msg, qos, dup)
-                except Exception, e:
+                except Exception as e:
                     msg = '{"response_id": "%s", "status": 0, "error_msg":"%s"}' % (messageId, str(e))
                     self.publish(replyTopic, msg, qos, dup)
                     
@@ -383,19 +383,19 @@ class InstaMsg(Thread):
     def __handleOneToOneMessage(self, mqttMsg):
         msgJson = self.__parseJson(mqttMsg.payload)
         messageId, responseId, replyTopic, status = None, None, None, 1
-        if(msgJson.has_key('reply_to')):
+        if('reply_to' in msgJson):
             replyTopic = msgJson['reply_to']
         else:
             raise ValueError("Send message json should have reply_to address.")   
-        if(msgJson.has_key('message_id')):
+        if('message_id' in msgJson):
             messageId = msgJson['message_id']
         else: 
             raise ValueError("Send message json should have a message_id.") 
-        if(msgJson.has_key('response_id')):
+        if('response_id' in msgJson):
             responseId = msgJson['response_id']
-        if(msgJson.has_key('body')):
+        if('body' in msgJson):
             body = msgJson['body']
-        if(msgJson.has_key('status')):
+        if('status' in msgJson):
             status = int(msgJson['status'])
         qos, dup = mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup
         if(responseId):
@@ -403,16 +403,16 @@ class InstaMsg(Thread):
             if(status == 0):
                 errorCode, errorMsg = None, None
                 if(isinstance(body, dict)):
-                    if(body.has_key("error_code")):
+                    if("error_code" in body):
                         errorCode = body.get("error_code")
-                    if(body.has_key("error_msg")):
+                    if("error_msg" in body):
                         errorMsg = body.get("error_msg")
                 result = Result(None, 0, (errorCode, errorMsg))
             else:
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 result = Result(msg, 1)
             
-            if(self.__sendMsgReplyHandlers.has_key(responseId)):
+            if(responseId in self.__sendMsgReplyHandlers):
                 msgHandler = self.__sendMsgReplyHandlers.get(responseId).get('handler')
             else:
                 msgHandler = None
@@ -488,8 +488,8 @@ class InstaMsg(Thread):
         try:
             self.log(INSTAMSG_LOG_LEVEL_INFO, "Rebooting system.")
             os.system("reboot")
-        except Exception, e:
-            print str(e)
+        except Exception as e:
+            print (str(e))
 
                 
             
@@ -677,7 +677,7 @@ class MqttClient:
     def process(self):
         try:
             if(not self.__disconnecting):
-		if(self.__waitingReconnect == 1):
+                if(self.__waitingReconnect == 1):
                     self.connect()
                 if(self.__sockInit):
                     self.__receive()
@@ -690,7 +690,7 @@ class MqttClient:
                             self.__lastPingRespTime = None
                         self.__sendPeriodicSignalInfo()
                 self.__processHandlersTimeout()
-        except socket.error, msg:
+        except socket.error as msg:
             self.__resetInitSockNConnect()
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
         except:
@@ -710,7 +710,7 @@ class MqttClient:
         except socket.timeout:
             self.__connecting = 0
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
-        except socket.error, msg:
+        except socket.error as msg:
             self.__disconnecting = 1
             self.__resetInitSockNConnect()
             self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
@@ -727,7 +727,7 @@ class MqttClient:
                     disConnectMsg = self.__mqttMsgFactory.message(fixedHeader)
                     encodedMsg = self.__mqttEncoder.ecode(disConnectMsg)
                     self.__sendall(encodedMsg)
-            except Exception, msg:
+            except Exception as msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
         finally:
             self.__closeSocket()
@@ -837,14 +837,14 @@ class MqttClient:
             
             for line in cmd.stdout:
                 if 'Link Quality' in line:
-                    print line.lstrip(' ')
+                    print (line.lstrip(' '))
                     linkQuality = re.search('Link Quality=(.+? )', line).group(1)
                     signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
                     result = {'antina_status':linkQuality, 'signal_strength':signalLevel}
                 elif 'Not-Associated' in line:
-                    print 'No signal'
-        except Exception, e:
-            print str(e)
+                    print ('No signal')
+        except Exception as e:
+            print (str(e))
         return result;
     
     def __sendPeriodicSignalInfo(self):
@@ -888,14 +888,14 @@ class MqttClient:
         try:
             if(data):
                 try:
-                    self.__sock.sendall(data)
-                except socket.error, msg:
+                    self.__sock.sendall(self.__str_to_unencoded_bytes(data))
+                except socket.error as msg:
                     self.__disconnecting = 1
                     self.__resetInitSockNConnect()
                     raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
         finally:
             self.lock.release()
-            
+      
     def __receive(self):
         self.lock.acquire()
         try:
@@ -913,12 +913,12 @@ class MqttClient:
                     else:
                         self.__log(INSTAMSG_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
                     self.__handleMqttMessage(mqttMsg) 
-            except MqttDecoderError, msg:
+            except MqttDecoderError as msg:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
             except socket.timeout:
                 self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][Socket time out.]")
                 pass
-            except (MqttFrameError, socket.error), msg:
+            except (MqttFrameError, socket.error) as msg:
                 if 'timed out' in msg.message.lower():
                     # Hack as ssl library does not throw timeout error
                     pass
@@ -927,6 +927,21 @@ class MqttClient:
                     self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
         finally:
             self.lock.release() 
+
+    def __str_to_unencoded_bytes(self, s):
+        """Convert a string to raw bytes without encoding"""
+        outlist = []
+        for cp in s:
+            num = ord(cp)
+            if num < 255:
+                outlist.append(struct.pack('B', num))
+            elif num < 65535:
+                outlist.append(struct.pack('>H', num))
+            else:
+                b = (num & 0xFF0000) >> 16
+                H = num & 0xFFFF
+                outlist.append(struct.pack('>bH', b, H))
+        return b''.join(outlist)
   
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
@@ -1131,7 +1146,7 @@ class MqttDecoder:
     BAD = 6
     
     def __init__(self):
-        self.__data = ''
+        self.__data = b''
         self.__init()
         self.__msgFactory = MqttMsgFactory()
         
@@ -1475,7 +1490,8 @@ class MqttEncoder:
         remainingLength = ''
         while 1:
             digit = num % 128
-            num /= 128
+            # num /= 128
+            num= int(num / 128)
             if (num > 0):
                 digit |= 0x80
             remainingLength += chr(digit) 
@@ -1484,7 +1500,7 @@ class MqttEncoder:
         return  remainingLength   
     
     def __encodeIntShort(self, number):  
-        return chr(number / 256) + chr(number % 256)
+        return chr(int(number / 256)) + chr(number % 256)
     
     def __encodeStringUtf8(self, s):
         return str(s)
@@ -1724,7 +1740,7 @@ class HTTPResponse:
                     data_block = self.__sock.recv(1500)
                 if not data_block:
                     break
-        except Exception, e:
+        except Exception as e:
             raise HTTPResponseError(str(e))
         return self
 
@@ -1852,7 +1868,7 @@ class HTTPResponse:
                     self.end()
                 else:
                     self.end()
-            except Exception, e:
+            except Exception as e:
                 raise Exception(str(e))
         finally:
             self.end()
@@ -1893,7 +1909,7 @@ class HTTPClient:
                 headers['Content-Length'] = len(''.join(form)) + fileSize
                 f = open(filename, 'rb')
                 return self.__request('POST', url, params, headers, f, timeout, form)  
-            except Exception, e:
+            except Exception as e:
                 if(e.__class__.__name__ == 'HTTPResponseError'):
                     raise HTTPResponseError(str(e))
                 raise HTTPClientError("HTTPClient:: %s" % str(e))
@@ -1918,7 +1934,7 @@ class HTTPClient:
                 else:
     #                 unlink(tempFileName)
                     os.remove(tempFileName)
-            except Exception, e:
+            except Exception as e:
                 if(e.__class__.__name__ == 'HTTPResponseError'):
                     raise HTTPResponseError(str(e))
                 raise HTTPClientError("HTTPClient:: %s" % str(e))
@@ -1942,7 +1958,7 @@ class HTTPClient:
                 f = open(filename, 'ab')
                 f.seek(0, 2)
                 fileSize = f.tell()
-            except Exception, e:
+            except Exception as e:
                 raise Exception(str(e))
         finally:
             if(f and hasattr(f, 'close')):
@@ -1962,7 +1978,7 @@ class HTTPClient:
             try:
                 request = self.__createHttpRequest(method, url, params, headers)
                 sizeHint = None
-                if(headers.has_key('Content-Length') and isinstance(body, file)):
+                if('Content-Length' in headers and isinstance(body, file)):
                     sizeHint = len(request) + headers.get('Content-Length')
                 self.__sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 if (self.__enableSsl):
@@ -1970,9 +1986,9 @@ class HTTPClient:
                 self.__sock.settimeout(timeout)
                 self.__sock.connect(self.__addr)
                 expect = None
-                if(headers.has_key('Expect')):
+                if('Expect' in headers):
                     expect = headers['Expect']
-                elif(headers.has_key('expect')):
+                elif('expect' in headers):
                     expect = headers['expect']
                 if(expect and (expect.lower() == '100-continue')):
                     self.__sock.sendall(request)
@@ -1987,7 +2003,7 @@ class HTTPClient:
                 else:
                     self.__send(request, body, fileUploadForm, fileObject, sizeHint)
                     return HTTPResponse(self.__sock, fileObject).response()
-            except Exception, e:
+            except Exception as e:
                 if(e.__class__.__name__ == 'HTTPResponseError'):
                     raise HTTPResponseError(str(e))
                 raise HTTPClientError("HTTPClient:: %s" % str(e))
@@ -2169,7 +2185,7 @@ class MediaStream(Thread):
             def _resultHandler(result):
                 self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Published message %s to topic %s with qos %d" % (msg, topic, qos))
             self.instamsg.publish(topic, msg, qos, dup, _resultHandler)
-        except Exception, e:
+        except Exception as e:
             self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
         
     def __subscribe(self, topic, qos=1):
@@ -2177,7 +2193,7 @@ class MediaStream(Thread):
             def _resultHandler(result):
                 self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, "Subscribed to topic %s with qos %d" % (topic, qos))
             self.instamsg.subscribe(topic, qos, self.__messageHandler, _resultHandler)
-        except Exception, e:
+        except Exception as e:
             self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, e)
             
     def __messageHandler(self, mqttMessage):
@@ -2197,15 +2213,15 @@ class MediaStream(Thread):
         
         self.instamsg.log(INSTAMSG_LOG_LEVEL_DEBUG, msgJson)
         messageId, replyTopic, method = None, None, None
-        if(msgJson.has_key('reply_to')):
+        if('reply_to' in msgJson):
             replyTopic = msgJson['reply_to']
         else:
             raise ValueError("Media stream message json should have reply_to address.") 
-        if(msgJson.has_key('message_id')):
+        if('message_id' in msgJson):
             messageId = msgJson['message_id']
         else: 
             raise ValueError("Media stream message json should have a message_id.")  
-        if(msgJson.has_key('method')):
+        if('method' in msgJson):
             method = msgJson['method']
         else: 
             raise ValueError("Media stream message json should have a method.")
@@ -2217,10 +2233,10 @@ class MediaStream(Thread):
                
     def __handleMediaReplyMessage(self, mqttMessage):
         msgJson = self.__parseJson(mqttMessage.body())
-        if(msgJson is not None and(msgJson.has_key('stream_id'))):
+        if(msgJson is not None and('stream_id' in msgJson)):
             self.streamId = msgJson['stream_id']
             self.streamIds.append(self.streamId)
-        if(msgJson is not None and(msgJson.has_key('sdp_answer'))):
+        if(msgJson is not None and('sdp_answer' in msgJson)):
             self.broadcast(msgJson['sdp_answer'])
             
     def __parseJson(self, jsonString):

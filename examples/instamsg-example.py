@@ -1,3 +1,8 @@
+import os,sys
+from pathlib import Path
+print 
+sys.path.append(Path(__file__).absolute().parent.absolute().parent / '../instamsg')
+
 import instamsg
 import sys
 import time
@@ -8,8 +13,8 @@ def start(args):
     try:
         options = {'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1, "connectivity": "wlan0", 'manufacturer':'Sony', 'model':'15CNB'}
 #         options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
-        clientId = "57b75b90-4ca4-11e5-837e-bc764e102b63"
-        authKey = "abcd1234%"
+        clientId = "33691c30-c567-11e8-814b-bc764e106405"
+        authKey = "2932e801a0a64ab4abaa3c2e923f9d19"
         instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
         instaMsg.start()
     except:
@@ -25,40 +30,40 @@ def __onConnect(instaMsg):
 #     __unsubscribe(instaMsg, topic)
     
 def __onDisConnect():
-    print "Client disconnected."
+    print ("Client disconnected.")
     
 def __subscribe(instaMsg, topic, qos):
     try:
         def _resultHandler(result):
-            print "Subscribed to topic %s with qos %d" % (topic, qos)
+            print ("Subscribed to topic %s with qos %d" % (topic, qos))
         instaMsg.subscribe(topic, qos, __messageHandler, _resultHandler)
-    except Exception, e:
-        print str(e)
+    except Exception as e:
+        print (str(e))
     
 def __publishMessage(instaMsg, topic, msg, qos, dup):
     try:
         def _resultHandler(result):
-            print result
-            print "Published message %s to topic %s with qos %d" % (msg, topic, qos)
+            print (result)
+            print ("Published message %s to topic %s with qos %d" % (msg, topic, qos))
         instaMsg.publish(topic, msg, qos, dup, _resultHandler)
-    except Exception, e:
-        print str(e)
+    except Exception as e:
+        print (str(e))
     
 def __unsubscribe(instaMsg, topic):
     try:
         def _resultHandler(result):
-            print "UnSubscribed from topic %s" % topic
+            print ("UnSubscribed from topic %s" % topic)
         instaMsg.unsubscribe(topic, _resultHandler)
-    except Exception, e:
-        print str(e)
+    except Exception as e:
+        print (str(e))
         
 def __messageHandler(mqttMessage):
         if(mqttMessage):
-            print "Received message %s" % str(mqttMessage.toString())
+            print ("Received message %s" % str(mqttMessage.toString()))
         
 def __oneToOneMessageHandler(msg):
     if(msg):
-        print "One to One Message received %s" % msg.toString()
+        print ("One to One Message received %s" % msg.toString())
         msg.reply("This is a reply to a one to one message.")
         
 def __sendMessage(instaMsg):
@@ -71,13 +76,13 @@ def __sendMessage(instaMsg):
             if(result.succeeded()):
                 replyMessage = result.result()
                 if(replyMessage):
-                    print "Message received %s" % replyMessage.toString()
+                    print ("Message received %s" % replyMessage.toString())
                     replyMessage.reply("This is a reply to a reply.")
             else:
-                print "Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1])
+                print ("Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1]))
         instaMsg.send(clienId, msg, qos, dup, _replyHandler, 120)    
-    except Exception, e:
-        print str(e)
+    except Exception as e:
+        print (str(e))
     
 if  __name__ == "__main__":
     rc = start(sys.argv)

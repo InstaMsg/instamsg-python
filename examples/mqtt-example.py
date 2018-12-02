@@ -36,7 +36,7 @@ def start(args):
         pass
     
 def __onConnect(mqttClient):
-    print "Connected"
+    print ("Connected")
     topic = "62513710-86c0-11e4-9dcf-a41f726775dd"
 #     topic = "d06f5d10-8091-11e4-bd82-543530e3bc65"
     qos = 0
@@ -48,23 +48,23 @@ def __debugMessages(msg):
     
 def __subscribe(mqttClient, topic, qos):
     def _resultHandler(messageId):
-        print "Subscribed to topic %s with qos %d" %(topic,0)
+        print ("Subscribed to topic %s with qos %d" %(topic,0))
         mqttClient.publish("92b58550-86c0-11e4-9dcf-a41f726775dd", "cccccccccc",2)
     mqttClient.subscribe(topic, qos, _resultHandler)
     
 def __publishMessage(mqttClient, topic, msg, qos):
     dup = 0
     def _resultHandler(messageId):
-        print "Published message %s to topic %s with qos %d" %(msg, topic,qos)
+        print ("Published message %s to topic %s with qos %d" %(msg, topic,qos))
     mqttClient.publish(topic, msg, qos, dup, _resultHandler)
     
 def __unsubscribe(mqttClient, topic):
     def _resultHandler(messageId):
-        print "unSubscribed to topic %s with qos %d" %(topic,qos)
+        print ("unSubscribed to topic %s with qos %d" %(topic,qos))
     mqttClient.unsubscribe(topic, _resultHandler)
         
 def _messageHandler(mqttMessage):
-        print "Received message %s" %str(mqttMessage.toString())
+        print ("Received message %s" %str(mqttMessage.toString()))
     
     
 if  __name__ == "__main__":
