@@ -28,48 +28,11 @@ from ..mqtt.result import Result
 from .message import Message
 from .media import MediaStream
 from .errors import *
+from .constants import *
 
 ####InstaMsg ###############################################################################
-# Logging Levels
-INSTAMSG_LOG_LEVEL_DISABLED = 0
-INSTAMSG_LOG_LEVEL_INFO = 1
-INSTAMSG_LOG_LEVEL_ERROR = 2
-INSTAMSG_LOG_LEVEL_DEBUG = 3
-# Logging Level String
-INSTAMSG_LOG_LEVEL = {0:"DISABLED", 1:"INFO", 2:"ERROR", 3:"DEBUG"}
-# Error codes
-INSTAMSG_ERROR_TIMEOUT = 0
-INSTAMSG_ERROR_NO_HANDLERS = 1
-INSTAMSG_ERROR_SOCKET = 2
-INSTAMSG_ERROR_AUTHENTICATION = 3
-# Message QOS
-INSTAMSG_QOS0 = 0
-INSTAMSG_QOS1 = 1
-INSTAMSG_QOS2 = 2
-#Provisioning States
-PROVISIONIG_STARTED = 0
-PROVISIONIG_SMS_READ = 1
-PROVISIONIG_MSG_SENT = 2
-PROVISIONING_COMPLETED = 3
-#Client Info
-NETWORK_INFO_PUBLISH_INTERVAL = 300
-
 
 class InstaMsg(Thread):
-    INSTAMSG_MAX_BYTES_IN_MSG = 10240
-    INSTAMSG_KEEP_ALIVE_TIMER = 60
-    INSTAMSG_RECONNECT_TIMER = 90
-    INSTAMSG_HOST = "device.instamsg.io"
-    INSTAMSG_PORT = 1883
-    INSTAMSG_PORT_SSL = 8883
-    INSTAMSG_HTTP_HOST = 'platform.instamsg.io'
-    INSTAMSG_HTTP_PORT = 80
-    INSTAMSG_HTTPS_PORT = 443
-    INSTAMSG_API_VERSION = "1.0"
-    INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
-    INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
-    # InstaMsg Versions // Update every time when some changes happened in this file.
-    INSTAMSG_VERSION = "1.01.00"
     
     def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
         if(clientId is None): raise ValueError('clientId cannot be null.')
@@ -92,7 +55,7 @@ class InstaMsg(Thread):
         self.__authHash = None
         self.__init(clientId, authKey)
         self.__logsListener = []
-        self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
+        self.__defaultReplyTimeout = INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self.__sslEnabled = 0
@@ -108,7 +71,7 @@ class InstaMsg(Thread):
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
             mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
-            self.__mqttClient = MqttClient(self.INSTAMSG_HOST, self.__port, clientIdAndUsername[0], enableSsl=self.enableSsl, options=mqttoptions)
+            self.__mqttClient = MqttClient(INSTAMSG_HOST, self.__port, clientIdAndUsername[0], enableSsl=self.enableSsl, options=mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
@@ -117,13 +80,13 @@ class InstaMsg(Thread):
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
+        self.__httpClient = HTTPClient(INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
  
     def __init(self, clientId, authKey):
         if (clientId and authKey):
             self.__authHash = hashlib.sha256((clientId + authKey).encode('utf-8')).hexdigest()
             self.__filesTopic = "instamsg/clients/%s/files" % clientId
-            self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
+            self.__fileUploadUrl = "/api/%s/clients/%s/files" % (INSTAMSG_API_VERSION, clientId)
             self.__enableServerLoggingTopic = "instamsg/clients/%s/enableServerLogging" % clientId
             self.__serverLogsTopic = "instamsg/clients/%s/logs" % clientId
             self.__rebootTopic = "instamsg/clients/%s/reboot" % clientId
@@ -152,19 +115,19 @@ class InstaMsg(Thread):
         if('keepAliveTimer' in options):
             self.__keepAliveTimer = options.get('keepAliveTimer')
         else:
-            self.__keepAliveTimer = self.INSTAMSG_KEEP_ALIVE_TIMER
+            self.__keepAliveTimer = INSTAMSG_KEEP_ALIVE_TIMER
         
         self.enableSsl = 0 
         if('enableSsl' in options and options.get('enableSsl')): 
             if(HAS_SSL):
                 self.enableSsl = 1
-                self.__port = self.INSTAMSG_PORT_SSL 
-                self.__httpPort = self.INSTAMSG_HTTPS_PORT
+                self.__port = INSTAMSG_PORT_SSL 
+                self.__httpPort = INSTAMSG_HTTPS_PORT
             else:
                 raise ImportError("SSL not supported, Please check python version and try again.")
         else: 
-            self.__port = self.INSTAMSG_PORT
-            self.__httpPort = self.INSTAMSG_HTTP_PORT
+            self.__port = INSTAMSG_PORT
+            self.__httpPort = INSTAMSG_HTTP_PORT
         if("connectivity" in options):
             self.__connectivity = options.get("connectivity");
         else:
@@ -319,7 +282,11 @@ class InstaMsg(Thread):
                 if 'Link Quality' in line:
                     linkQuality = re.search('Link Quality=(.+? )', line).group(1)
                     signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
-                    result = {'antenna_status':linkQuality, 'signal_strength':signalLevel, "instamsg_version" : self.INSTAMSG_VERSION}
+                    result = {
+                            'antenna_status':linkQuality, 
+                            'signal_strength':signalLevel, 
+                            "instamsg_version" : INSTAMSG_VERSION
+                            }
                 elif 'Not-Associated' in line:
                     self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsg, method = getSignalInfo]:: No signal.") 
         except Exception as msg:
@@ -487,8 +454,8 @@ class InstaMsg(Thread):
                 self.__oneToOneMessageHandler(msg)
         
     def __mqttClientOptions(self, username, password, keepAliveTimer):
-        if(len(password) > self.INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % self.INSTAMSG_MAX_BYTES_IN_MSG)
-        if(keepAliveTimer > 32768 or keepAliveTimer < self.INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % self.INSTAMSG_KEEP_ALIVE_TIMER)
+        if(len(password) > INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % INSTAMSG_MAX_BYTES_IN_MSG)
+        if(keepAliveTimer > 32768 or keepAliveTimer < INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % INSTAMSG_KEEP_ALIVE_TIMER)
         options = {}
         options['hasUserName'] = 1
         options['hasPassword'] = 1
@@ -502,7 +469,7 @@ class InstaMsg(Thread):
         options['willTopic'] = ""
         options['willMessage'] = ""
         options['logLevel'] = self.__logLevel
-        options['reconnectTimer'] = self.INSTAMSG_RECONNECT_TIMER
+        options['reconnectTimer'] = INSTAMSG_RECONNECT_TIMER
         return options
     
     def __getClientIdAndUsername(self, clientId):
@@ -543,8 +510,8 @@ class InstaMsg(Thread):
                 'imei': imei, 'serial_number': imei, 'model': self.__model,
                 'manufacturer':self.__manufacturer, 
                 'firmware_version':'', 
-                'client_version': self.INSTAMSG_VERSION,
-                "instamsg_version" : self.INSTAMSG_VERSION
+                'client_version': INSTAMSG_VERSION,
+                "instamsg_version" : INSTAMSG_VERSION
                 }
         self.publish(self.__metadataTopic, str(metadata), 1, 0)
         

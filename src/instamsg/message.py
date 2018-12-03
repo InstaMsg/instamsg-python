@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Message QOS
-INSTAMSG_QOS0 = 0
-INSTAMSG_QOS1 = 1
-INSTAMSG_QOS2 = 2
-
-INSTAMSG_RESULT_HANDLER_TIMEOUT = 10 
+from .constants import *
 
 class Message:
     def __init__(self, messageId, topic, body, qos=INSTAMSG_QOS0, dup=0, replyTopic=None, instaMsg=None):

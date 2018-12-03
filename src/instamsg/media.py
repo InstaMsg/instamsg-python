@@ -2,6 +2,8 @@
 
 from threading import Thread, Event, RLock 
 
+from .errors import *
+
 class MediaStream(Thread):
     
     def __init__(self, instamsg, uri, clientId, streamId=None, options={}):
