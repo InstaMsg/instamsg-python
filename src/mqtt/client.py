@@ -14,16 +14,11 @@ try:
     HAS_SSL = True
 except:
     HAS_SSL = False
-try:
-    import subprocess
-    import argparse
-    import re
-except:
-    pass
 
 from .messages import MqttFixedHeader, MqttMsgFactory
 from .decoder import MqttDecoder
 from .encoder import MqttEncoder
+from .result import Result
 from .errors import *
 from .constants import *
 
@@ -74,10 +69,7 @@ class MqttClient:
         self.__msgIdInbox = []
         self.__resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self.__serverLogsTopic = "instamsg/" + clientId + "-" + self.options['username'] + "/logs";
-        self.__connectivity = options['connectivityMedium']
-        self.__sendSignalInfoPeriodicTimer =  time.time()
-        self.__sendSignalInfoInterval = options['sendSignalInfoPeriodicInterval']
-        self.__signalTopic = "instamsg/client/signalinfo"
+        
         
     def process(self):
         try:
@@ -93,7 +85,6 @@ class MqttClient:
                             self.__sendPingReq()
                             self.__lastPingReqTime = time.time()
                             self.__lastPingRespTime = None
-                        self.__sendPeriodicSignalInfo()
                 self.__processHandlersTimeout()
         except socket.error as msg:
             self.__resetInitSockNConnect()
@@ -227,36 +218,8 @@ class MqttClient:
         if(callable(callback)):
             self.__onMessageCallBack = callback
         else:
-            raise ValueError('Callback should be a callable object.') 
-        
-                
-    def getSignalInfo(self):
-        result = {'antina_status':'', 'signal_strength':''}
-        try :
-            parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
-            parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
-                        help='wlan interface (default: wlan0)')
-            args = parser.parse_args()
-            cmd = subprocess.Popen('iwconfig %s' % args.interface, shell=True,
-                               stdout=subprocess.PIPE)
-            for line in cmd.stdout:
-                line = line.decode("utf-8")
-                if 'Link Quality' in line:
-                    linkQuality = re.search('Link Quality=(.+? )', line).group(1)
-                    signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
-                    result = {'antina_status':linkQuality, 'signal_strength':signalLevel}
-                elif 'Not-Associated' in line:
-                    self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClient, method = getSignalInfo]:: No signal.") 
-        except Exception as msg:
-            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[MqttClientError, method = getSignalInfo][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
-        return result;
-    
-    def __sendPeriodicSignalInfo(self):
-        if (self.__sendSignalInfoPeriodicTimer - time.time() <= 0):
-            signalInfo = self.getSignalInfo()
-            self.publish(self.__signalTopic, str(signalInfo), 1, 0)
-            self.__sendSignalInfoPeriodicTimer = self.__sendSignalInfoPeriodicTimer + self.__sendSignalInfoInterval
-        
+            raise ValueError('Callback should be a callable object.')   
+
     def __validateTopic(self, topic):
         if(topic):
             pass

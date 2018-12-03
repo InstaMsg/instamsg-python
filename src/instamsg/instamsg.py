@@ -5,6 +5,7 @@ import os
 import json
 import fcntl
 import struct
+import hashlib
 import _thread
 from threading import Thread, Event, RLock 
 import socket
@@ -14,8 +15,17 @@ try:
 except:
     HAS_SSL = False  
 
-from ..mqtt.client import *
+try:
+    import subprocess
+    import argparse
+    import re
+except:
+    pass
+
+from ..mqtt.client import MqttClient
 from ..http.client import HTTPClient
+from ..mqtt.result import Result
+from .message import Message
 from .media import MediaStream
 from .errors import *
 
@@ -36,6 +46,13 @@ INSTAMSG_ERROR_AUTHENTICATION = 3
 INSTAMSG_QOS0 = 0
 INSTAMSG_QOS1 = 1
 INSTAMSG_QOS2 = 2
+#Provisioning States
+PROVISIONIG_STARTED = 0
+PROVISIONIG_SMS_READ = 1
+PROVISIONIG_MSG_SENT = 2
+PROVISIONING_COMPLETED = 3
+#Client Info
+NETWORK_INFO_PUBLISH_INTERVAL = 300
 
 
 class InstaMsg(Thread):
@@ -48,16 +65,20 @@ class InstaMsg(Thread):
     INSTAMSG_HTTP_HOST = 'platform.instamsg.io'
     INSTAMSG_HTTP_PORT = 80
     INSTAMSG_HTTPS_PORT = 443
-    INSTAMSG_API_VERSION = "beta"
+    INSTAMSG_API_VERSION = "1.0"
     INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
     INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
-    INSTAMSG_VERSION = "1.00.00"
-    SIGNAL_PERIODIC_INTERVAL = 300
+    # InstaMsg Versions // Update every time when some changes happened in this file.
+    INSTAMSG_VERSION = "1.01.00"
     
     def __init__(self, clientId, authKey, connectHandler, disConnectHandler, oneToOneMessageHandler, options={}):
+        if(clientId is None): raise ValueError('clientId cannot be null.')
+        if(authKey is None or authKey is ''): raise ValueError('authKey cannot be null.')
         if(not callable(connectHandler)): raise ValueError('connectHandler should be a callable object.')
         if(not callable(disConnectHandler)): raise ValueError('disConnectHandler should be a callable object.')
         if(not callable(oneToOneMessageHandler)): raise ValueError('oneToOneMessageHandler should be a callable object.')
+        if(clientId): 
+            if(len(clientId) != 36): raise ValueError('clientId: %s is not a valid uuid e.g. cbf7d550-7204-11e4-a2ad-543530e3bc65')% clientId
         Thread.__init__(self)
         self.name = 'InstaMsg Thread'
         self.alive = Event()
@@ -68,26 +89,25 @@ class InstaMsg(Thread):
         self.__onConnectCallBack = connectHandler   
         self.__onDisConnectCallBack = disConnectHandler  
         self.__oneToOneMessageHandler = oneToOneMessageHandler
-        self.__filesTopic = "instamsg/clients/" + clientId + "/files";
-        self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
-        self.__enableServerLoggingTopic = "instamsg/clients/" + clientId + "/enableServerLogging";
-        self.__serverLogsTopic = "instamsg/clients/" + clientId + "/logs";
-        self.__sessionTopic = "instamsg/client/session"
-        self.__metadataTopic = "instamsg/client/metadata"
-        self.__rebootTopic = "instamsg/clients/" + clientId + "/reboot"
-        self.__userClientid = []
+        self.__authHash = None
+        self.__init(clientId, authKey)
+        self.__logsListener = []
         self.__defaultReplyTimeout = self.INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
+        self.__sslEnabled = 0
+        self.__configHandler = None
         self.__manufacturer = ""
         self.__model = ""
         self.__connectivity = ""
-        self.__initOptions(options)
-        self.ipAddress = ''
+        self.__ipAddress = ''
+        self.__mqttClient = None
         self.__mediaStream = None
+        self.__initOptions(options)
+        self.__publishNetworkInfoTimer = time.time()
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
-            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer, self.__connectivity)
+            mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
             self.__mqttClient = MqttClient(self.INSTAMSG_HOST, self.__port, clientIdAndUsername[0], enableSsl=self.enableSsl, options=mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(self.__onDisConnect)
@@ -98,8 +118,26 @@ class InstaMsg(Thread):
         else:
             self.__mqttClient = None
         self.__httpClient = HTTPClient(self.INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
-        
+ 
+    def __init(self, clientId, authKey):
+        if (clientId and authKey):
+            self.__authHash = hashlib.sha256((clientId + authKey).encode('utf-8')).hexdigest()
+            self.__filesTopic = "instamsg/clients/%s/files" % clientId
+            self.__fileUploadUrl = "/api/%s/clients/%s/files" % (self.INSTAMSG_API_VERSION, clientId)
+            self.__enableServerLoggingTopic = "instamsg/clients/%s/enableServerLogging" % clientId
+            self.__serverLogsTopic = "instamsg/clients/%s/logs" % clientId
+            self.__rebootTopic = "instamsg/clients/%s/reboot" % clientId
+            self.__infoTopic = "instamsg/clients/%s/info" % clientId
+            self.__sessionTopic = "instamsg/clients/%s/session" % clientId
+            self.__metadataTopic = "instamsg/clients/%s/metadata" % clientId
+            self.__configServerToClientTopic = "instamsg/clients/%s/config/serverToClient" % clientId
+            self.__configClientToServerTopic = "instamsg/clients/%s/config/clientToServer" % clientId
+            self.__networkInfoTopic = "instamsg/clients/%s/network" % clientId
+
+
     def __initOptions(self, options):
+        if( 'configHandler' in options): 
+            self.__configHandler = options['configHandler']
         if('enableSocket' in self.__options):
             self.__enableTcp = options.get('enableSocket')
         else: self.__enableTcp = 1
@@ -141,11 +179,11 @@ class InstaMsg(Thread):
             while self.alive.isSet():
                 try:
                     if(self.__mqttClient is not None):
-                        self.__processHandlersTimeout()
                         self.__mqttClient.process()
+                        self.__processHandlersTimeout()
+                        self.__publishNetworkInfo()
                 except Exception as e:
-                    raise ValueError(str(e))
-                    self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = process]- %s" % (str(e)))
+                    self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = run]- %s" % (str(e)))
         finally:
             self.close()
                 
@@ -214,7 +252,7 @@ class InstaMsg(Thread):
             timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
             print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
             
-    def getIpAddress(self, ifname):
+    def __getIpAddress(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
             s.fileno(),
@@ -222,7 +260,7 @@ class InstaMsg(Thread):
             struct.pack('256s', bytes(ifname[:15], 'utf-8'))
         )[20:24])
         
-    def getSerialNumber(self):
+    def __getSerialNumber(self):
         cpuserial = "0000000000000000"
         try:
             f = open('/proc/cpuinfo', 'r')
@@ -259,28 +297,55 @@ class InstaMsg(Thread):
         while(messageId in self.__sendMsgReplyHandlers):
             messageId = time.time()
         return messageId;
+ 
+
+    def __publishNetworkInfo(self):
+        if(self.__publishNetworkInfoTimer - time.time() <= 0):
+            networkInfo = self.__getSignalInfo()
+            self.publish(self.__networkInfoTopic, str(networkInfo), INSTAMSG_QOS0, 0)
+            self.__publishNetworkInfoTimer = self.__publishNetworkInfoTimer + NETWORK_INFO_PUBLISH_INTERVAL
+
+    def __getSignalInfo(self):
+        result = {'antina_status':'', 'signal_strength':''}
+        try :
+            parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
+            parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
+                        help='wlan interface (default: wlan0)')
+            args = parser.parse_args()
+            cmd = subprocess.Popen('iwconfig %s' % args.interface, shell=True,
+                               stdout=subprocess.PIPE)
+            for line in cmd.stdout:
+                line = line.decode("utf-8")
+                if 'Link Quality' in line:
+                    linkQuality = re.search('Link Quality=(.+? )', line).group(1)
+                    signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
+                    result = {'antenna_status':linkQuality, 'signal_strength':signalLevel, "instamsg_version" : self.INSTAMSG_VERSION}
+                elif 'Not-Associated' in line:
+                    self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsg, method = getSignalInfo]:: No signal.") 
+        except Exception as msg:
+            self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsg, method = getSignalInfo][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+        return result;
     
-    
-    def __enableServerLogging(self,msg):
-        if(msg):
-            msgJson = self.__parseJson(msg.body())
-            if(msgJson is not None and( 'client_id' in msgJson and 'logging' in msgJson)):
-                clientId = msgJson['client_id']
+    def __enableServerLogging(self, msg):
+        if (msg):
+            msgJson = self.__parseJson(msg.payload);
+            if (msgJson is not None and (msgJson.has_key('client_id') and (msgJson.has_key('logging')))):
+                clientId = str(msgJson['client_id'])
                 logging = msgJson['logging']
-                if(logging):
-                    if(not self.__userClientid.__contains__(clientId)):
-                        self.__userClientid.append(clientId)
-                    self.__enableLogToServer = 1
-                else:
-                    if(self.__userClientid.__contains__(clientId)):
-                        self.__userClientid.remove(clientId)
-                    if(len(self.__userClientid) == 0):
-                        self.__enableLogToServer = 0
+                if (logging):
+                    if(not self.__logsListener.__contains__(clientId)):
+                        self.__logsListener.append(clientId)
+                        self.__enableLogToServer = 1;
+                    else:
+                        if(self.__logsListener.__contains__(clientId)):
+                            self.__logsListener.remove(clientId);
+                        if (len(self.__logsListener) == 0):
+                            self.__enableLogToServer = 0;
     
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
         self.__connected = 1
-        self.ipAddress = self.getIpAddress(self.__connectivity)
+        self.__ipAddress = self.__getIpAddress(self.__connectivity)
         self.__sendClientSessionData()
         self.__sendClientMetadata()
         self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS1, self.__enableServerLogging)
@@ -421,7 +486,7 @@ class InstaMsg(Thread):
                 msg = Message(messageId, self.__clientId, body, qos, dup, replyTopic=replyTopic, instaMsg=self)
                 self.__oneToOneMessageHandler(msg)
         
-    def __mqttClientOptions(self, username, password, keepAliveTimer, connectivityMedium):
+    def __mqttClientOptions(self, username, password, keepAliveTimer):
         if(len(password) > self.INSTAMSG_MAX_BYTES_IN_MSG): raise ValueError("Password length cannot be more than %d bytes." % self.INSTAMSG_MAX_BYTES_IN_MSG)
         if(keepAliveTimer > 32768 or keepAliveTimer < self.INSTAMSG_KEEP_ALIVE_TIMER): raise ValueError("keepAliveTimer should be between %d and 32768" % self.INSTAMSG_KEEP_ALIVE_TIMER)
         options = {}
@@ -438,8 +503,6 @@ class InstaMsg(Thread):
         options['willMessage'] = ""
         options['logLevel'] = self.__logLevel
         options['reconnectTimer'] = self.INSTAMSG_RECONNECT_TIMER
-        options['connectivityMedium'] = connectivityMedium
-        options['sendSignalInfoPeriodicInterval'] = self.SIGNAL_PERIODIC_INTERVAL
         return options
     
     def __getClientIdAndUsername(self, clientId):
@@ -468,16 +531,21 @@ class InstaMsg(Thread):
                 del self.__sendMsgReplyHandlers[key]
     
     def __sendClientSessionData(self):
-        self.ipAddress = self.getIpAddress(self.__connectivity) 
-        signalInfo = self.__mqttClient.getSignalInfo()
-        session = {'method':self.__connectivity, 'ip_address':self.ipAddress, 'antina_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
+        self.__ipAddress = self.__getIpAddress(self.__connectivity) 
+        signalInfo = self.__getSignalInfo()
+        session = {'network_interface':self.__connectivity, 'ip_address':self.__ipAddress, 'antenna_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
 #         session = {'method' : 'GPRS', 'ip_address' : '100.106.28.23', 'antina_status' : ' 1', 'signal_strength' : '31'}
         self.publish(self.__sessionTopic, str(session), 1, 0)
 
     def __sendClientMetadata(self):
-        imei = self.getSerialNumber()
-        metadata = {'imei': imei, 'serial_number': imei, 'model': self.__model,
-                'firmware_version':'', 'manufacturer':self.__manufacturer, 'client_version': self.INSTAMSG_VERSION}
+        imei = self.__getSerialNumber()
+        metadata = {
+                'imei': imei, 'serial_number': imei, 'model': self.__model,
+                'manufacturer':self.__manufacturer, 
+                'firmware_version':'', 
+                'client_version': self.INSTAMSG_VERSION,
+                "instamsg_version" : self.INSTAMSG_VERSION
+                }
         self.publish(self.__metadataTopic, str(metadata), 1, 0)
         
     def __reboot(self):

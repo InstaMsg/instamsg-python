@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 
+# Message QOS
+INSTAMSG_QOS0 = 0
+INSTAMSG_QOS1 = 1
+INSTAMSG_QOS2 = 2
+
+INSTAMSG_RESULT_HANDLER_TIMEOUT = 10 
+
 class Message:
     def __init__(self, messageId, topic, body, qos=INSTAMSG_QOS0, dup=0, replyTopic=None, instaMsg=None):
         self.__instaMsg = instaMsg
@@ -29,7 +36,7 @@ class Message:
     def replyTopic(self):
         return self.__replyTopic
         
-    def reply(self, msg, dup=0, replyHandler=None, timeout=InstaMsg.INSTAMSG_RESULT_HANDLER_TIMEOUT):
+    def reply(self, msg, dup=0, replyHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__instaMsg and self.__replyTopic):
             msgId = self.__instaMsg._generateMessageId()
             replyMsgJsonString = ('{"message_id": "%s", "response_id": "%s", "reply_to": "%s", "body": "%s", "status": 1}') % (msgId, self.__id, self.__topic, msg)
