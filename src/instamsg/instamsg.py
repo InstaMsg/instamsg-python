@@ -60,6 +60,7 @@ class InstaMsg(Thread):
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self.__sslEnabled = 0
         self.__configHandler = None
+        self.__rebootHandler = None
         self.__manufacturer = ""
         self.__model = ""
         self.__connectivity = ""
@@ -76,7 +77,7 @@ class InstaMsg(Thread):
             self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
             self.__mqttClient.onMessage(self.__handleMessage)
-            self.__connected = 0
+            self.__connected = 0    
             self.__mqttClient.connect()
         else:
             self.__mqttClient = None
@@ -101,6 +102,8 @@ class InstaMsg(Thread):
     def __initOptions(self, options):
         if( 'configHandler' in options): 
             self.__configHandler = options['configHandler']
+        if( 'rebootHandler' in options): 
+            self.__rebootHandler = options['rebootHandler']
         if('enableSocket' in self.__options):
             self.__enableTcp = options.get('enableSocket')
         else: self.__enableTcp = 1
@@ -179,7 +182,12 @@ class InstaMsg(Thread):
                 self.__msgHandlers[topic] = msgHandler
                 if(topic == self.__clientId):
                     raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
-                self.__mqttClient.subscribe(topic, qos, resultHandler, timeout)
+                def _resultHandler(result):
+                    if(result.failed()):
+                        if(topic in self.__msgHandlers):
+                            del self.__msgHandlers[topic]
+                    resultHandler(result)
+                self.__mqttClient.subscribe(topic, qos, _resultHandler, timeout)
             except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = subscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgSubError(str(e))
@@ -191,7 +199,13 @@ class InstaMsg(Thread):
     def unsubscribe(self, topics, resultHandler, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
         if(self.__mqttClient):
             try:
-                self.__mqttClient.unsubscribe(topics, resultHandler, timeout)
+                def _resultHandler(result):
+                    if(result.succeeded()):
+                        for topic in topics:
+                            if(topic in self.__msgHandlers):
+                                del self.__msgHandlers[topic]
+                    resultHandler(result)
+                self.__mqttClient.unsubscribe(topics, _resultHandler, timeout)
             except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = unsubscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
                 raise InstaMsgUnSubError(str(e))
@@ -215,6 +229,57 @@ class InstaMsg(Thread):
             timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
             print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
             
+    def provision(self, provId, provPin):
+        try:
+            self.__provisioningState = PROVISIONIG_STARTED
+            self.__provisioningData = {}
+            self.__provisioningState = PROVISIONIG_MSG_SENT
+            self.__sendProvisioningMsg(self.__provisioningData)
+        except Exception as e:
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = provisoin]- %s" % (str(e)))    
+            raise InstaMsgProvisionError(str(e))
+
+
+    # def publishConfig(self, configs, resultHandler=None):
+    #     if(not self.__provisioned):InstaMsgSendError("Cannot publish config as device not provisioned.")
+    #     try:
+    #         configs["instamsg_version"]="1.0"
+    #         message = str(configs).replace("\'", '"').replace("'", '"')
+    #         def _resultHandler(result):
+    #             if(result.failed()):
+    #                 if(callable(resultHandler)):resultHandler(Result(configs,0,result.cause()))  
+    #                 self.log(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsg]::Error publishing Config to server: %s" %str(result.cause()))  
+    #             else:
+    #                 if(callable(resultHandler)):resultHandler(Result(configs,1))
+    #                 self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Config published to server: %s" %str(configs))  
+    #         self.publish(self.__configClientToServerTopic, message, qos=INSTAMSG_QOS1, dup=0, resultHandler=_resultHandler)
+    #     except Exception, e:
+    #         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientConfigError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
+
+    def __sendProvisioningMsg(self,provisioningData):
+        pass
+        # if(not self.__modem or (self.__modem and self.__modem.getState() != Modem.MODEM_STATE_OK)):
+        #     self.__modem = self.__initializeModem(provisioningData)
+        # provId = self.__modem.imei
+        # provPin = provisioningData['prov_pin']
+        # self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Sending provisioning message...")
+        # provResponse = self.__mqttClient.provision(provId, provPin)
+        # if(provResponse):
+        #     provisioningData['client_id'] = provResponse[0]
+        #     provisioningData['auth_token'] = provResponse[1]
+        #     self.__onProvisionCallBack (provisioningData)
+        #     self.__init(provResponse[0], provResponse[1])
+        #     self.__provisioned, self.__provisioningState = 1 ,PROVISIONING_COMPLETED
+        #     self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning completed.")
+        #     self.__initMqttClient(provResponse[0],provResponse[1])
+        #     at.deleteSms(1,4)
+        # else:
+        #     self.__provisioningState = PROVISIONIG_STARTED
+        #     self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning failed. Restarting provisioning...")
+  
+    def streamVideo(self,mediaUrl,mediaStreamid):
+        self.__mediaStream = MediaStream(self,mediaUrl, self.__clientId,mediaStreamid)
+
     def __getIpAddress(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
@@ -235,9 +300,6 @@ class InstaMsg(Thread):
             cpuserial = "ERROR00000000000"
         return cpuserial
     
-    def streamVideo(self,mediaUrl,mediaStreamid):
-        self.__mediaStream = MediaStream(self,mediaUrl, self.__clientId,mediaStreamid)
-    
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
             if(replyHandler):
@@ -245,8 +307,9 @@ class InstaMsg(Thread):
                 self.__sendMsgReplyHandlers[messageId] = {'time':time.time(), 'timeout': timeout, 'handler':replyHandler, 'timeOutMsg':timeOutMsg}
                 def _resultHandler(result):
                     if(result.failed()):
-                        replyHandler(result)
-                        del self.__sendMsgReplyHandlers[messageId]
+                        if(messageId in self.__sendMsgReplyHandlers):
+                            del self.__sendMsgReplyHandlers[messageId]
+                    replyHandler(result)
             else:
                 _resultHandler = None
             self.publish(clienId, msg, qos, dup, _resultHandler)
@@ -258,7 +321,7 @@ class InstaMsg(Thread):
     def _generateMessageId(self):
         messageId = self.__clientId + "-" + str(int(time.time() * 1000))
         while(messageId in self.__sendMsgReplyHandlers):
-            messageId = time.time()
+            messageId = self.__clientId + "-" + str(int(time.time() * 1000))
         return messageId;
  
 
@@ -269,7 +332,7 @@ class InstaMsg(Thread):
             self.__publishNetworkInfoTimer = self.__publishNetworkInfoTimer + NETWORK_INFO_PUBLISH_INTERVAL
 
     def __getSignalInfo(self):
-        result = {'antina_status':'', 'signal_strength':''}
+        result = {'antenna_status':'', 'signal_strength':''}
         try :
             parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
             parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
@@ -296,18 +359,18 @@ class InstaMsg(Thread):
     def __enableServerLogging(self, msg):
         if (msg):
             msgJson = self.__parseJson(msg.payload);
-            if (msgJson is not None and (msgJson.has_key('client_id') and (msgJson.has_key('logging')))):
+            if (msgJson is not None and ('client_id' in msgJson and ('logging' in msgJson))):
                 clientId = str(msgJson['client_id'])
                 logging = msgJson['logging']
                 if (logging):
-                    if(not self.__logsListener.__contains__(clientId)):
+                    if(clientId not in self.__logsListener):
                         self.__logsListener.append(clientId)
                         self.__enableLogToServer = 1;
-                    else:
-                        if(self.__logsListener.__contains__(clientId)):
-                            self.__logsListener.remove(clientId);
-                        if (len(self.__logsListener) == 0):
-                            self.__enableLogToServer = 0;
+                else:
+                    if(clientId in self.__logsListener):
+                        self.__logsListener.remove(clientId);
+                    if (len(self.__logsListener) == 0):
+                        self.__enableLogToServer = 0;
     
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
@@ -315,7 +378,7 @@ class InstaMsg(Thread):
         self.__ipAddress = self.__getIpAddress(self.__connectivity)
         self.__sendClientSessionData()
         self.__sendClientMetadata()
-        self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS1, self.__enableServerLogging)
+        self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS0, self.__enableServerLogging)
         time.sleep(30)
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         
@@ -329,17 +392,24 @@ class InstaMsg(Thread):
             self.log(level, msg)
     
     def __handleMessage(self, mqttMsg):
-        if(mqttMsg.topic == self.__clientId):
-            self.__handleOneToOneMessage(mqttMsg)
-        elif(mqttMsg.topic == self.__filesTopic):
-            self.__handleFileTransferMessage(mqttMsg)
-        elif(mqttMsg.topic == self.__rebootTopic):
-            self.__reboot()
-        else:
-            msg = Message(mqttMsg.messageId, mqttMsg.topic, mqttMsg.payload, mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup)
-            msgHandler = self.__msgHandlers.get(mqttMsg.topic)
-            if(msgHandler):
-                msgHandler(msg)
+        try:
+            if(mqttMsg.topic == self.__clientId):
+                self.__handlePointToPointMessage(mqttMsg)
+            elif(mqttMsg.topic == self.__filesTopic):
+                self.__handleFileTransferMessage(mqttMsg)
+            elif(mqttMsg.topic == self.__rebootTopic):
+                self.__handleSystemRebootMessage()
+            elif(mqttMsg.topic == self.__configServerToClientTopic):
+                self.__handleConfigMessage(mqttMsg)
+            elif(mqttMsg.topic == self.__enableServerLoggingTopic):
+                self.__enableServerLogging(mqttMsg)
+            else:
+                msg = Message(mqttMsg.messageId, mqttMsg.topic, mqttMsg.payload, mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup)
+                msgHandler = self.__msgHandlers.get(mqttMsg.topic)
+                if(msgHandler):
+                    msgHandler(msg)
+        except Exception as e:
+            self.log(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsg]::Error in handling received message. Error message is : %s " % str(e))
                 
     def __handleFileTransferMessage(self, mqttMsg):
         msgJson = self.__parseJson(mqttMsg.payload)
@@ -500,9 +570,9 @@ class InstaMsg(Thread):
     def __sendClientSessionData(self):
         self.__ipAddress = self.__getIpAddress(self.__connectivity) 
         signalInfo = self.__getSignalInfo()
-        session = {'network_interface':self.__connectivity, 'ip_address':self.__ipAddress, 'antenna_status': signalInfo['antina_status'], 'signal_strength': signalInfo['signal_strength']}
-#         session = {'method' : 'GPRS', 'ip_address' : '100.106.28.23', 'antina_status' : ' 1', 'signal_strength' : '31'}
-        self.publish(self.__sessionTopic, str(session), 1, 0)
+        session = {'network_interface':self.__connectivity, 'ip_address':self.__ipAddress, 'antenna_status': signalInfo['antenna_status'], 'signal_strength': signalInfo['signal_strength']}
+#         session = {'method' : 'GPRS', 'ip_address' : '100.106.28.23', 'antenna_status' : ' 1', 'signal_strength' : '31'}
+        self.publish(self.__sessionTopic, str(session), INSTAMSG_QOS0, 0)
 
     def __sendClientMetadata(self):
         imei = self.__getSerialNumber()
@@ -513,11 +583,14 @@ class InstaMsg(Thread):
                 'client_version': INSTAMSG_VERSION,
                 "instamsg_version" : INSTAMSG_VERSION
                 }
-        self.publish(self.__metadataTopic, str(metadata), 1, 0)
-        
-    def __reboot(self):
-        try:
-            self.log(INSTAMSG_LOG_LEVEL_INFO, "Rebooting system.")
-            os.system("reboot")
-        except Exception as e:
-            print (str(e))
+        self.publish(self.__metadataTopic, str(metadata), INSTAMSG_QOS0, 0)
+    
+    def __handleConfigMessage(self, mqttMsg):
+        msgJson = self.__parseJson(mqttMsg.payload)
+        if(callable(self.__configHandler)):
+            self.__configHandler(Result((msgJson),1))
+
+    def __handleSystemRebootMessage(self):
+        self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Rebooting device.")
+        if(callable(self.__rebootHandler)):
+            self.__rebootHandler() 

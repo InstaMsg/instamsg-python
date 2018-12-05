@@ -21,8 +21,8 @@ class MqttDecoder:
     def __state(self):
         return self.__state
     
-    def decode(self, data):
-        if(data):
+    def decode(self, data=b''):
+        if(data or self.__data ):
             self.__data = self.__data + data
             if(self.__state == self.READING_FIXED_HEADER_FIRST):
                 self.__decodeFixedHeaderFirstByte(self.__getByteStr())
@@ -46,6 +46,8 @@ class MqttDecoder:
                 if(self.__bytesDiscardedCounter == self.__remainingLength):
                     e = self.__error
                     self.__init()
+                    # Discard any data that is there.
+                    self.__data = b''
                     raise MqttDecoderError(e) 
             if(self.__state == self.MESSAGE_READY):
                 # returns a tuple of (mqttMessage, dataRemaining)
@@ -53,8 +55,10 @@ class MqttDecoder:
                 self.__init()
                 return mqttMsg
             if(self.__state == self.BAD):
-                # do not decode until disconnection.
-                raise MqttFrameError(self.__error)  
+                # Discard any data that is there.
+                e = self.__error
+                self.__init()
+                raise MqttFrameError(e)  
         return None 
             
     def __decodeFixedHeaderFirstByte(self, byteStr):
@@ -65,7 +69,7 @@ class MqttDecoder:
         self.__fixedHeader.retain = (byte & 0x01)
     
     def __decodeFixedHeaderRemainingLength(self):
-            while (1 and self.__data):
+            while (self.__data):
                 byte = ord(self.__getByteStr())
                 self.__remainingLength += (byte & 127) * self.__multiplier
                 self.__multiplier *= 128
@@ -85,7 +89,7 @@ class MqttDecoder:
         self.__variableHeader['topic'] = None
         
 
-    def __decodeVariableHeader(self):  
+    def __decodeVariableHeader(self):
         if self.__fixedHeader.messageType in [CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ]:
             self.__state = self.DISCARDING_MESSAGE
             self.__error = ('MqttDecoder: Client cannot receive CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ message type.') 
@@ -99,6 +103,13 @@ class MqttDecoder:
                 self.__getByteStr()  # discard reserved byte
                 self.__variableHeader['connectReturnCode'] = ord(self.__getByteStr())
                 self.__state = self.MESSAGE_READY
+        elif self.__fixedHeader.messageType == PROVACK:
+            if(len(self.__data) < 2):
+                pass  # let for more bytes come
+            else:
+                self.__getByteStr()  # discard reserved byte
+                self.__variableHeader['provisionReturnCode'] = ord(self.__getByteStr())
+                self.__state = self.READING_PAYLOAD        
         elif self.__fixedHeader.messageType == SUBACK:
             messageId = self.__decodeMsbLsb()
             if(messageId is not None):
@@ -121,7 +132,7 @@ class MqttDecoder:
             self.__state = self.MESSAGE_READY
         else:
             self.__state = self.DISCARDING_MESSAGE
-            self.__error = ('MqttDecoder: Unrecognised message type.') 
+            self.__error = ('MqttDecoder: Unrecognised message type - %s' % str(self.__fixedHeader.messageType)) 
             
     def __decodePayload(self, bytesRemaining):
         paloadBytes = self.__getNBytesStr(bytesRemaining)
@@ -135,7 +146,7 @@ class MqttDecoder:
                     grantedQos.append(qos)
                 self.__payload = grantedQos
                 self.__state = self.MESSAGE_READY
-            elif self.__fixedHeader.messageType == PUBLISH:
+            elif self.__fixedHeader.messageType in (PUBLISH, PROVACK):
                 self.__payload = paloadBytes
                 self.__state = self.MESSAGE_READY
     
@@ -157,7 +168,7 @@ class MqttDecoder:
             lsb = self.__getByteStr()
             intMsbLsb = ord(msb) << 8 | ord(lsb)
         if (intMsbLsb < 0 or intMsbLsb > MQTT_MAX_INT):
-            return -1
+            return - 1
         else:
             return intMsbLsb
         
@@ -172,7 +183,7 @@ class MqttDecoder:
         self.__bytesConsumedCounter = self.__bytesConsumedCounter + n
         return nBytes
     
-    def __init(self):   
+    def __init(self):
         self.__state = self.READING_FIXED_HEADER_FIRST
         self.__remainingLength = 0
         self.__multiplier = 1

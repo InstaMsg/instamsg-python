@@ -8,7 +8,7 @@ class MqttEncoder:
     def __init__(self):
         pass
     
-    def ecode(self, mqttMessage):
+    def encode(self, mqttMessage):
         msgType = mqttMessage.fixedHeader.messageType
         if msgType == CONNECT:
             return self.__encodeConnectMsg(mqttMessage) 
@@ -27,7 +27,7 @@ class MqttEncoder:
         elif msgType in [PINGREQ, PINGRESP, DISCONNECT]:
             return self.__encodeFixedHeaderOnlyMsg(mqttMessage)
         else:
-            raise MqttEncoderError('MqttEncoder: Unknown message type.') 
+            raise MqttEncoderError('MqttEncoder: Unknown message type - %s' % str(msgType))
     
     def __encodeConnectMsg(self, mqttConnectMessage):
         if(isinstance(mqttConnectMessage, MqttConnectMsg)):
@@ -36,7 +36,7 @@ class MqttEncoder:
             # Encode Payload
             clientId = self.__encodeStringUtf8(mqttConnectMessage.clientId)
             if(not self.__isValidClientId(clientId)):
-                raise ValueError("MqttEncoder: invalid clientId: " + clientId + " should be less than 23 chars in length.")
+                raise ValueError("MqttEncoder: invalid clientId: %s should be less than 23 chars in length."% str(clientId))
             encodedPayload = self.__encodeIntShort(len(clientId)) + clientId
             if(mqttConnectMessage.isWillFlag):
                 encodedPayload = encodedPayload + self.__encodeIntShort(len(mqttConnectMessage.willTopic)) + self.__encodeStringUtf8(mqttConnectMessage.willTopic)
@@ -176,7 +176,6 @@ class MqttEncoder:
         remainingLength = ''
         while 1:
             digit = num % 128
-            # num /= 128
             num= int(num / 128)
             if (num > 0):
                 digit |= 0x80
@@ -185,7 +184,7 @@ class MqttEncoder:
                     break
         return  remainingLength   
     
-    def __encodeIntShort(self, number):  
+    def __encodeIntShort(self, number): 
         return chr(int(number / 256)) + chr(number % 256)
     
     def __encodeStringUtf8(self, s):

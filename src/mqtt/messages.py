@@ -3,7 +3,7 @@
 from .constants import *
         
 class MqttFixedHeader:
-    def __init__(self, messageType=None, qos=0, dup=0, retain=0, remainingLength=0):
+    def __init__(self, messageType=None, qos=MQTT_QOS0, dup=0, retain=0, remainingLength=0):
         self.messageType = messageType or None
         self.dup = dup or 0
         self.qos = qos or 0
@@ -49,6 +49,14 @@ class MqttConnAckMsg(MqttMsg):
         self.__variableHeader = variableHeader
         self.connectReturnCode = variableHeader.get('connectReturnCode')
         self.payload = None
+        
+class MqttProvAckMsg(MqttMsg):
+    def __init__(self, fixedHeader, variableHeader, payload):
+        MqttMsg.__init__(self, fixedHeader, variableHeader)
+        self.fixedHeader = fixedHeader
+        self.__variableHeader = variableHeader
+        self.provisionReturnCode = variableHeader.get('provisionReturnCode')
+        self.payload = payload
         
 class MqttPingReqMsg(MqttMsg):
     def __init__(self, fixedHeader):
@@ -96,7 +104,7 @@ class MqttPublishMsg(MqttMsg):
         self.messageId = variableHeader.get('messageId')
         self.topic = variableHeader.get('topic')
         # __payload bytes
-        self.payload = payload
+        self.payload = payload.strip()
 
 class MqttSubscribeMsg(MqttMsg):
     def __init__(self, fixedHeader, variableHeader, payload=[]):
@@ -128,7 +136,6 @@ class MqttUnsubAckMsg(MqttMsg):
         self.fixedHeader = fixedHeader
         self.messageId = variableHeader.get('messageId')
 
-
 class MqttMsgFactory:
   
     def message(self, fixedHeader, variableHeader=None, payload=None):
@@ -144,7 +151,7 @@ class MqttMsgFactory:
             return MqttConnAckMsg(fixedHeader, variableHeader)
         elif fixedHeader.messageType == PUBLISH: 
             return MqttPublishMsg(fixedHeader, variableHeader, payload)
-        elif fixedHeader.messageType == SUBACK: 
+        elif fixedHeader.messageType == PUBACK: 
             return MqttPubAckMsg(fixedHeader, variableHeader)
         elif fixedHeader.messageType == PUBREC: 
             return MqttPubRecMsg(fixedHeader, variableHeader)
@@ -160,5 +167,7 @@ class MqttMsgFactory:
             return MqttSubAckMsg(fixedHeader, variableHeader, payload)
         elif fixedHeader.messageType == UNSUBACK: 
             return MqttUnsubAckMsg(fixedHeader, variableHeader)
+        elif fixedHeader.messageType == PROVACK: 
+            return MqttProvAckMsg(fixedHeader, variableHeader, payload)
         else:
             return None
