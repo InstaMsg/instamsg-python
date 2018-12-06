@@ -23,7 +23,7 @@ class MqttDecoder:
     
     def decode(self, data=b''):
         if(data or self.__data ):
-            self.__data = self.__data + data
+            self.__data = self.__data.join([data])
             if(self.__state == self.READING_FIXED_HEADER_FIRST):
                 self.__decodeFixedHeaderFirstByte(self.__getByteStr())
                 self.__state = self.READING_FIXED_HEADER_REMAINING

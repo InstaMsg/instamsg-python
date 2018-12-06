@@ -25,6 +25,7 @@ except:
 from ..mqtt.client import MqttClient
 from ..http.client import HTTPClient
 from ..mqtt.result import Result
+from ..mqtt.constants import PROVISIONING_CLIENT_ID
 from .message import Message
 from .media import MediaStream
 from .errors import *
@@ -186,7 +187,7 @@ class InstaMsg(Thread):
                     if(result.failed()):
                         if(topic in self.__msgHandlers):
                             del self.__msgHandlers[topic]
-                    resultHandler(result)
+                    if(callable(resultHandler)): resultHandler(result)
                 self.__mqttClient.subscribe(topic, qos, _resultHandler, timeout)
             except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = subscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
@@ -228,15 +229,25 @@ class InstaMsg(Thread):
         else:
             timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
             print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
-            
-    def provision(self, provId, provPin):
+   
+    @classmethod        
+    def provision(cls, provId, provPin, provisionHandler, timeout = 60):
+        if(not callable(provisionHandler)): raise ValueError('provisionHandler should be a callable object.')
         try:
-            self.__provisioningState = PROVISIONIG_STARTED
-            self.__provisioningData = {}
-            self.__provisioningState = PROVISIONIG_MSG_SENT
-            self.__sendProvisioningMsg(self.__provisioningData)
+            def _log(level, message):
+                timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
+                print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))               
+            _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Sending provisioning message...")      
+            mqttClient = MqttClient(INSTAMSG_HOST, INSTAMSG_PORT_SSL, PROVISIONING_CLIENT_ID, enableSsl=1)
+            mqttClient.onDebugMessage(_log)
+            provResponse = mqttClient.provision(provId, provPin, timeout)
+            if(provResponse):
+                provisionHandler (provResponse)
+                _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning completed.")
+            else:
+                _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning failed.")
         except Exception as e:
-            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = provisoin]- %s" % (str(e)))    
+            _log(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = provisoin]- %s" % (str(e)))    
             raise InstaMsgProvisionError(str(e))
 
 
@@ -256,26 +267,7 @@ class InstaMsg(Thread):
     #     except Exception, e:
     #         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientConfigError, method = send][%s]:: %s" % (e.__class__.__name__ , str(e)))
 
-    def __sendProvisioningMsg(self,provisioningData):
-        pass
-        # if(not self.__modem or (self.__modem and self.__modem.getState() != Modem.MODEM_STATE_OK)):
-        #     self.__modem = self.__initializeModem(provisioningData)
-        # provId = self.__modem.imei
-        # provPin = provisioningData['prov_pin']
-        # self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Sending provisioning message...")
-        # provResponse = self.__mqttClient.provision(provId, provPin)
-        # if(provResponse):
-        #     provisioningData['client_id'] = provResponse[0]
-        #     provisioningData['auth_token'] = provResponse[1]
-        #     self.__onProvisionCallBack (provisioningData)
-        #     self.__init(provResponse[0], provResponse[1])
-        #     self.__provisioned, self.__provisioningState = 1 ,PROVISIONING_COMPLETED
-        #     self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning completed.")
-        #     self.__initMqttClient(provResponse[0],provResponse[1])
-        #     at.deleteSms(1,4)
-        # else:
-        #     self.__provisioningState = PROVISIONIG_STARTED
-        #     self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning failed. Restarting provisioning...")
+      
   
     def streamVideo(self,mediaUrl,mediaStreamid):
         self.__mediaStream = MediaStream(self,mediaUrl, self.__clientId,mediaStreamid)
@@ -558,7 +550,8 @@ class InstaMsg(Thread):
         return json.loads(jsonString)
     
     def __processHandlersTimeout(self): 
-        for key, value in self.__sendMsgReplyHandlers.items():
+        for key in list(self.__resultHandlers):
+            value = self.__resultHandlers[key]
             if((time.time() - value['time']) >= value['timeout']):
                 resultHandler = value['handler']
                 if(resultHandler):

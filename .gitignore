@@ -58,3 +58,7 @@ target/
 
 #Virtual environment
 venv/
+
+#auth.json
+examples/auth.json
+auth.json

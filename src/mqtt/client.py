@@ -5,6 +5,7 @@ import time
 import json
 import fcntl
 import struct
+import traceback
 import _thread
 from threading import Thread, Event, RLock 
 import socket
@@ -27,20 +28,21 @@ class MqttClient:
 
     def __init__(self, host, port, clientId, enableSsl=0, options={}):
         if(not clientId):
-            raise ValueError('clientId cannot be null.')
+            raise ValueError('MqttClient:: clientId cannot be null.')
+        if(len(clientId) > MQTT_MAX_CLIENT_ID_LENGTH):
+            raise ValueError('MqttClient:: clientId cannot length cannot be greater than %s.' % MQTT_MAX_CLIENT_ID_LENGTH)
         if(not host):
-            raise ValueError('host cannot be null.')
+            raise ValueError('MqttClient:: host cannot be null.')
         if(not port):
-            raise ValueError('port cannot be null.')
+            raise ValueError('MqttClient:: port cannot be null.')
         self.lock = RLock()
         self.host = host
         self.port = port
         self.clientId = clientId
         self.enableSsl= enableSsl
-        self.options = options
-        self.options['clientId'] = clientId
+        self.options = self.__initOptions(options)
         self.keepAliveTimer = self.options['keepAliveTimer']
-        self.reconnectTimer = options['reconnectTimer']
+        self.reconnectTimer = self.options['reconnectTimer']
         self.__logLevel = options.get('logLevel')
         self.__cleanSession = 1
         self.__sock = None
@@ -65,7 +67,25 @@ class MqttClient:
         self.__lastConnectTime = time.time()
         self.decoderErrorCount = 0
         self.__connectAckTimeoutCount = 0
-        
+
+    def __initOptions(self, options):
+        options['clientId'] = self.clientId
+        if(not 'hasUserName' in options): options['hasUserName'] = 0 
+        if(not 'username' in options): options['username'] = ''
+        if(not 'hasPassword' in options): options['hasPassword'] = 0 
+        if(not 'password' in options): options['password'] = ''
+        if(not 'keepAliveTimer' in options): options['keepAliveTimer'] = 60 
+        if(options['keepAliveTimer'] > MQTT_MAX_KEEP_ALIVE_TIMER ): raise ValueError("keepAliveTimer should be less than 64800")
+        if(not 'hasPassword' in options): options['hasPassword'] = 0 
+        if(not 'isCleanSession' in options): options['isCleanSession'] = 1     
+        if(not 'isWillFlag' in options): options['isWillFlag'] = 0
+        if(not 'willQos' in options): options['willQos'] = 0
+        if(not 'isWillRetain' in options): options['isWillRetain'] = 0
+        if(not 'willTopic' in options): options['willTopic'] = ""
+        if(not 'willMessage' in options): options['willMessage'] = ""
+        if(not 'logLevel' in options): options['logLevel'] = MQTT_LOG_LEVEL_DEBUG
+        if(not 'reconnectTimer' in options): options['reconnectTimer'] = MQTT_SOCKET_RECONNECT_TIMER   
+        return options  
         
     def process(self):
         try:
@@ -92,6 +112,7 @@ class MqttClient:
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (str(msg)))
         except:
             self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
+            traceback.print_exc()
 
 
     def provision(self, provId, provPin, timeout = 300):
@@ -116,7 +137,7 @@ class MqttClient:
                 while(timeout > time.time()):
                     time.sleep(10)
                     mqttMsg = self.__receive()
-                    if(mqttMsg and mqttMsg.fixedHeader.messageType == self.PROVACK):
+                    if(mqttMsg and mqttMsg.fixedHeader.messageType == PROVACK):
                         auth = self.__getAuthInfoFromProvAckMsg(mqttMsg)
                         break
                 return auth
@@ -132,7 +153,7 @@ class MqttClient:
                     self.__log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Mqtt Connecting to %s:%s' % (self.host, str(self.port)))   
                     fixedHeader = MqttFixedHeader(CONNECT, qos=0, dup=0, retain=0)
                     connectMsg = self.__mqttMsgFactory.message(fixedHeader, self.options, self.options)
-                    encodedMsg = self.__mqttEncoder.encode(connectMsg)
+                    encodedMsg = self.__mqttEncoder.encode(connectMsg)                    
                     self.__sendall(encodedMsg)
         except socket.timeout:
             self.__connecting = 0
@@ -177,7 +198,7 @@ class MqttClient:
             timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self.__resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
         self.__sendall(encodedMsg)      
-        if(qos == MQTT_QOS0 and resultHandler): 
+        if(qos == MQTT_QOS0 and resultHandler and callable(resultHandler)): 
             resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
 
         
@@ -284,7 +305,7 @@ class MqttClient:
         try:
             if(data):
                 try:
-                    self.__sock.sendall(self.__str_to_unencoded_bytes(data))
+                    self.__sock.sendall(data)
                 except socket.error as msg:                  
                     self.__resetSock()
                     raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
@@ -311,8 +332,7 @@ class MqttClient:
                     self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive]:: Resetting socket as MqttDecoderError count exceeded %s" % (str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET)))
                     self.decoderErrorCount = 0
                     self.__resetSock()                    
-            except socket.timeout:
-                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClient, method = __receive][Socket time out. No data to receive...]")
+            except socket.timeout:                
                 pass
             except (MqttFrameError, socket.error) as msg:
                 if 'timed out' in msg.message.lower():
@@ -324,20 +344,6 @@ class MqttClient:
         finally:
             self.lock.release() 
 
-    def __str_to_unencoded_bytes(self, s):
-        """Convert a string to raw bytes without encoding"""
-        outlist = []
-        for cp in s:
-            num = ord(cp)
-            if num < 255:
-                outlist.append(struct.pack('B', num))
-            elif num < 65535:
-                outlist.append(struct.pack('>H', num))
-            else:
-                b = (num & 0xFF0000) >> 16
-                H = num & 0xFFFF
-                outlist.append(struct.pack('>bH', b, H))
-        return b''.join(outlist)
   
     def __handleMqttMessage(self, mqttMessage):
         self.__lastPingRespTime = time.time()
@@ -404,11 +410,29 @@ class MqttClient:
             
     def __getAuthInfoFromProvAckMsg(self, mqttMessage):
         provisionReturnCode = mqttMessage.provisionReturnCode
-        if(provisionReturnCode == CONNECTION_ACCEPTED):
-            payload = mqttMessage.payload
-            clientId=payload[0:36]
-            authToken = payload[37:]
-            return (clientId, authToken)
+        payload = mqttMessage.payload
+        provisioningData = {}
+        if (not (payload and provisionReturnCode in [PROVISIONING_SUCCESSFUL, PROVISIONING_SUCCESSFUL_WITH_CERT])):
+            return provisioningData
+        if(provisionReturnCode == PROVISIONING_SUCCESSFUL):
+            provisioningData['client_id']=payload[0:36].decode("utf-8") 
+            provisioningData['auth_token'] = payload[37:].decode("utf-8") 
+            provisioningData['secure_ssl_certificate'] = 0
+            provisioningData['key'] = ''
+            provisioningData['certificate'] = ''
+            return provisioningData
+        elif(provisionReturnCode == PROVISIONING_SUCCESSFUL_WITH_CERT):
+            payloadJson = json.loads(jsonString)
+            keys = ['client_id', 'auth_token', 'secure_ssl_certificate', 'key', 'certificate']   
+            for key in keys:             
+                if (key in payloadJson):
+                    if (key in ['key', 'certificate']):
+                        provisioningData[key] = payloadJson[key].replace("\\\\n", "\n")
+                    else:
+                        provisioningData[key] = payloadJson[key]
+                else:
+                    provisioningData[key] = ''
+            return provisioningData
         else:
             self.__handleProvisionAndConnectAckCode("Provisioning", provisionReturnCode)
             
@@ -539,10 +563,11 @@ class MqttClient:
         return self.__messageId
     
     def __processHandlersTimeout(self):
-        for key, value in self.__resultHandlers.items():
+        for key in list(self.__resultHandlers):
+            value = self.__resultHandlers[key]
             if((time.time() - value['time']) >= value['timeout']):
-                resultHandler = value['handler']
-                if(resultHandler):
+                resultHandler = value['handler']             
+                if(resultHandler and callable(resultHandler)):
                     timeOutMsg = value['timeOutMsg']
                     resultHandler(Result(None, 0, (MQTT_ERROR_TIMEOUT, timeOutMsg)))
                     value['handler'] = None
