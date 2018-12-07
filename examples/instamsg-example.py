@@ -38,7 +38,15 @@ def start(args):
        print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1]))) 
 
 def __startInstaMsg(provId='', provkey=''):
-    options = {'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1, "connectivity": "wlan0", 'manufacturer':'Sony', 'model':'15CNB'}
+    options = {
+                'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 
+                'enableSsl':1, 
+                "connectivity": "wlan0", 
+                'manufacturer':'Sony', 
+                'model':'15CNB',
+                'configHandler': __configHandler,
+                'rebootHandler': __rebootHandler
+                }
     # Try to get auth info from auth.json if file exists
     try:
         auth = __getAuthJson()
@@ -94,7 +102,12 @@ def __onConnect(instaMsg):
     __subscribe(instaMsg, topic, qos)
     try:
         """
-        messages are loop backed if send to clientId topic
+        Messages are loop backed if send to clientId topic.
+        You need to authorize the client to publish/subscribe to self or other opics
+        1. Login to your instamsg account and edit client
+        2. Add topics to Sub topics or Pub Topics
+        3. For loopback add clientId to both pub and sub topics.
+
         """
 
         print("Sending loopbak messages to self...")
@@ -110,6 +123,10 @@ def __onConnect(instaMsg):
         print("File auth.json not found or path is incorrect. Unable to send loopbak messages to self...")
     time.sleep(10)
     __unsubscribe(instaMsg, topic)
+    config={
+            "test":1
+            }
+    __publishConfig(instaMsg, config)
 
     
 def __onDisConnect():
@@ -165,6 +182,24 @@ def __sendMessage(instaMsg, clientId):
         instaMsg.send(clientId, msg, qos, dup, _replyHandler, 120)    
     except Exception as e:
         print (str(e))
+
+def __publishConfig(instaMsg, config):
+    try:
+        def _resultHandler(result):
+            print ("Published config %s" % json.dumps(config))
+    except Exception as e:
+        print (str(e))
+    instaMsg.publishConfig(config, _resultHandler)
+
+
+def __configHandler(result):
+    if(result.succeeded()):
+        configJson = result.result()
+        print("Received config from server: %s" % json.dumps(configJson))
+
+
+def __rebootHandler():
+    print("Received rebbot signal from server.")
     
 if  __name__ == "__main__":
     rc = start(sys.argv)

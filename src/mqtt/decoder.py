@@ -147,7 +147,7 @@ class MqttDecoder:
                 self.__payload = grantedQos
                 self.__state = self.MESSAGE_READY
             elif self.__fixedHeader.messageType in (PUBLISH, PROVACK):
-                self.__payload = paloadBytes
+                self.__payload = paloadBytes.decode('utf-8')
                 self.__state = self.MESSAGE_READY
     
     def __decodeTopic(self):
@@ -158,7 +158,7 @@ class MqttDecoder:
         if (self.__data and stringLength and (len(self.__data) < stringLength)):
             return None  # wait for more bytes
         else:
-            self.__variableHeader['topic'] = self.__getNBytesStr(stringLength)
+            self.__variableHeader['topic'] = self.__getNBytesStr(stringLength).decode('utf-8')
     
     def __decodeMsbLsb(self):
         if(len(self.__data) < 2):
