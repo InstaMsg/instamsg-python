@@ -6,7 +6,7 @@ venv/bin/activate:
 	if which virtualenv-2.7 >/dev/null; then virtualenv-2.7 -p /usr/bin/python3.6 venv; else virtualenv -p /usr/bin/python3.6 venv; fi
 
 run: venv/bin/activate requirements/development.txt
-	. venv/bin/activate; python main.py
+	. venv/bin/activate; python examples/instamsg-example.py
 
 setup: venv/bin/activate requirements/development.txt
 	. venv/bin/activate; pip install -Ur requirements/development.txt

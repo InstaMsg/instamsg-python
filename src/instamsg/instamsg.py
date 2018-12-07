@@ -372,7 +372,7 @@ class InstaMsg(Thread):
         self.__sendClientSessionData()
         self.__sendClientMetadata()
         self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS0, self.__enableServerLogging)
-        time.sleep(30)
+        time.sleep(10)
         if(self.__onConnectCallBack): self.__onConnectCallBack(self)  
         
 

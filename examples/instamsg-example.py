@@ -1,8 +1,16 @@
 import os,sys
-from pathlib import Path
 import json
-# print (Path(__file__).absolute().parent.absolute().parent / 'instamsg')
-# sys.path.insert(1, Path(__file__).absolute().parent.absolute().parent / 'instamsg')
+import inspect
+
+#add parent directory to path so that modules can be imported when example 
+#script directly run from current folder 
+#$ python path/to/examples/instamsg-example.py
+#or via $make run
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0,parentdir) 
+
 
 from src.instamsg import instamsg
 import sys
