@@ -111,9 +111,8 @@ class MqttClient:
         except MqttConnectError as msg:
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (str(msg)))
         except:
-            self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
-            traceback.print_exc()
-
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
+            
 
     def provision(self, provId, provPin, timeout = 300):
         try:
@@ -157,13 +156,13 @@ class MqttClient:
                     self.__sendall(encodedMsg)
         except socket.timeout:
             self.__connecting = 0
-            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out")
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out sending connect")
         except socket.error as msg:
             self.__resetSock()
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
         except:
             self.__connecting = 0
-            self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = connect][Exception]:: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][Exception]:: %s" % (traceback.print_exc()))
     
     def disconnect(self):
         try:
@@ -175,7 +174,7 @@ class MqttClient:
                     encodedMsg = self.__mqttEncoder.encode(disConnectMsg)
                     self.__sendall(encodedMsg)
             except Exception as msg:
-                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = disconnect][Exception]:: %s" % (traceback.print_exc()))
         finally:
             self.__resetSock()
     
@@ -327,20 +326,23 @@ class MqttClient:
                 return mqttMsg 
             except MqttDecoderError as msg:
                 self.decoderErrorCount = self.decoderErrorCount + 1
-                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][MqttDecoderError]:: %s" % (traceback.print_exc()))
                 if (self.decoderErrorCount > MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET):
                     self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive]:: Resetting socket as MqttDecoderError count exceeded %s" % (str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET)))
                     self.decoderErrorCount = 0
                     self.__resetSock()                    
             except socket.timeout:                
                 pass
-            except (MqttFrameError, socket.error) as msg:
+            except socket.error as msg:
                 if 'timed out' in msg.message.lower():
                     # Hack as ssl library does not throw timeout error
                     pass
                 else:
                     self.__resetSock()
-                    self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][%s]:: %s" % (msg.__class__.__name__ , str(msg)))
+                    self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][SocketError]:: %s" % (str(msg)))
+            except MqttFrameError as msg:
+                self.__resetSock()
+                self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __receive][MqttFrameError]:: %s" % (traceback.print_exc()))                
         finally:
             self.lock.release() 
 
@@ -381,19 +383,19 @@ class MqttClient:
     def __handleSubAck(self, mqttMessage):
         resultHandler = self.__getResultHandler(mqttMessage)
         if(resultHandler):
-            resultHandler(Result(mqttMessage, 1))
+            if(callable(resultHandler)): resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleUnSubAck(self, mqttMessage):
         resultHandler = self.__getResultHandler(mqttMessage)
         if(resultHandler):
-            resultHandler(Result(mqttMessage, 1))
+            if(callable(resultHandler)): resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __onPublish(self, mqttMessage):
         resultHandler = self.__getResultHandler(mqttMessage)
         if(resultHandler):
-            resultHandler(Result(mqttMessage, 1))
+            if(callable(resultHandler)): resultHandler(Result(mqttMessage, 1))
             del self.__resultHandlers[mqttMessage.messageId]
     
     def __handleConnAckMsg(self, mqttMessage):
@@ -472,7 +474,7 @@ class MqttClient:
     def __handlePubAckMsg(self, mqttMessage):
         resultHandler = self.__getResultHandler(mqttMessage)
         if(resultHandler):
-            resultHandler(Result(mqttMessage.messageId, 1, None))
+            if(callable(resultHandler)): resultHandler(Result(mqttMessage.messageId, 1, None))
             resultHandler = None
             del self.__resultHandlers[mqttMessage.messageId]
             
@@ -545,8 +547,8 @@ class MqttClient:
             if(self.__sock):
                 self.__sock.close()
                 self.__sock = None
-        except:
-            self.__log(INSTAMSG_LOG_LEVEL_ERROR, '[MqttClient]:: Unexpected Error while closing socket...')  
+        except: 
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = __closeSocket][Exception]:: %s" % (traceback.print_exc()))
         finally:
             self.__sockInit = 0
             self.__connected = 0

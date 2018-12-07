@@ -14,7 +14,7 @@ try:
     HAS_SSL = True
 except:
     HAS_SSL = False  
-
+import traceback
 try:
     import subprocess
     import argparse
@@ -151,6 +151,7 @@ class InstaMsg(Thread):
                         self.__publishNetworkInfo()
                 except Exception as e:
                     self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = run]- %s" % (str(e)))
+                    self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError, method = run]- %s" % (traceback.print_exc()))                   
         finally:
             self.close()
                 
@@ -205,7 +206,7 @@ class InstaMsg(Thread):
                         for topic in topics:
                             if(topic in self.__msgHandlers):
                                 del self.__msgHandlers[topic]
-                    resultHandler(result)
+                    if(callable(resultHandler)):resultHandler(result)
                 self.__mqttClient.unsubscribe(topics, _resultHandler, timeout)
             except Exception as e:
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = unsubscribe][%s]:: %s" % (e.__class__.__name__ , str(e)))
@@ -242,7 +243,7 @@ class InstaMsg(Thread):
             mqttClient.onDebugMessage(_log)
             provResponse = mqttClient.provision(provId, provPin, timeout)
             if(provResponse):
-                provisionHandler (provResponse)
+                if(callable(provisionHandler)): provisionHandler (provResponse)
                 _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning completed.")
             else:
                 _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning failed.")
@@ -301,7 +302,7 @@ class InstaMsg(Thread):
                     if(result.failed()):
                         if(messageId in self.__sendMsgReplyHandlers):
                             del self.__sendMsgReplyHandlers[messageId]
-                    replyHandler(result)
+                    if(callable(replyHandler)):replyHandler(result)
             else:
                 _resultHandler = None
             self.publish(clienId, msg, qos, dup, _resultHandler)
@@ -508,7 +509,7 @@ class InstaMsg(Thread):
                 msgHandler = None
                 self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: No handler for message [messageId=%s responseId=%s]" % (str(messageId), str(responseId)))
             if(msgHandler):
-                msgHandler(result)
+                if(callable(msgHandler)): msgHandler(result)
                 del self.__sendMsgReplyHandlers[responseId]
         else:
             if(self.__oneToOneMessageHandler):
@@ -550,16 +551,16 @@ class InstaMsg(Thread):
         return json.loads(jsonString)
     
     def __processHandlersTimeout(self): 
-        for key in list(self.__resultHandlers):
-            value = self.__resultHandlers[key]
+        for key in list(self.__sendMsgReplyHandlers):
+            value = self.__sendMsgReplyHandlers[key]
             if((time.time() - value['time']) >= value['timeout']):
                 resultHandler = value['handler']
                 if(resultHandler):
                     timeOutMsg = value['timeOutMsg']
-                    resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
+                    if(callable(resultHandler)): resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
                     value['handler'] = None
                 del self.__sendMsgReplyHandlers[key]
-    
+  
     def __sendClientSessionData(self):
         self.__ipAddress = self.__getIpAddress(self.__connectivity) 
         signalInfo = self.__getSignalInfo()

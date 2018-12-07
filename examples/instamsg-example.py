@@ -1,47 +1,112 @@
-from instamsg import instamsg
+import os,sys
+from pathlib import Path
+import json
+# print (Path(__file__).absolute().parent.absolute().parent / 'instamsg')
+# sys.path.insert(1, Path(__file__).absolute().parent.absolute().parent / 'instamsg')
+
+from src.instamsg import instamsg
 import sys
 import time
 
-def start(args):
-    instaMsg = None
-    
-    try:
-        options = {'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1, "connectivity": "wlan0", 'manufacturer':'Sony', 'model':'15CNB'}
-#         options={'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG }
-        clientId = "33691c30-c567-11e8-814b-bc764e106405"
-        authKey = "2932e801a0a64ab4abaa3c2e923f9d19"
-        instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
-        instaMsg.start()
+clientId = ''
+authKey = ''
+
+def start(args): 
+    try:      
+        """
+        1. Signup at https://platform.instamsg.io/#/signup
+        2. Create an App
+        3. Create a Tenant
+        4. Create a Client. Use a unique identifier for provisioning id like imei 
+           or mac address. Set a provisioning pin.
+        5. Note down the provisioning id and pin. Set it in the below parameters.
+        """
+        
+        provId = "12345678"
+        provkey = "12345678"
+        __startInstaMsg(provId, provkey)
+
     except:
-       print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1])))
-    
+       print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1]))) 
+
+def __startInstaMsg(provId='', provkey=''):
+    options = {'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 'enableSsl':1, "connectivity": "wlan0", 'manufacturer':'Sony', 'model':'15CNB'}
+    # Try to get auth info from auth.json if file exists
+    try:
+        auth = __getAuthJson()
+        clientId = auth['client_id']
+        authKey = auth['auth_token']
+        enable_client_side_ssl_certificate = auth['auth_token']
+        client_ssl_certificate = auth['certificate']
+        client_ssl_certificate_key = auth['key']
+        instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
+        instaMsg.start()            
+    except IOError:
+        print("File auth.json not found or path is incorrect. Trying provisioning...")
+        instamsg.InstaMsg.provision(provId, provkey, __provisionHandler)
+
+def __getAuthJson():
+    print("Trying to read auth info from auth.json ...")
+    filename =  Path(__file__).absolute().parent / 'auth.json'
+    with open(filename,"r") as f:
+        auth = json.load(f)
+    f.close() 
+    return auth   
+
+
+def __provisionHandler(provMsg):
+    """
+    1. On succesfull provisioning a file auth.json would be created in 
+       current working directory.
+    2. These credentials would be used to connect to InstaMsg cloud.
+    3. If you loose these credentials you will have to login into your InstamSg
+       account and reprovision the client with new provisioning pin.
+    """
+    print(" Received provisioning response %s . Saving to file auth.json" % provMsg) 
+    try:
+        filename =  Path(__file__).absolute().parent / 'auth.json'
+        with open(filename,"w+") as f:
+            json.dump(provMsg ,f)
+        f.close()
+        __startInstaMsg()
+    except IOError:
+        print("File not found or path is incorrect")
+
+
 def __onConnect(instaMsg):
     topic = "subtopic1"
     qos = 0
-#     __subscribe(instaMsg, topic, qos)
-#     __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd5", "cccccccccccc",2, 0)
-#     __sendMessage(instaMsg)
-#     __publishMessage(instaMsg, "92b58550-86c0-11e4-9dcf-a41f726775dd", "bbbbbbbbbbbb",0, 0)
-#     __unsubscribe(instaMsg, topic)
-    print ("publish message")
-    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash1",1, 0)
-    time.sleep(60)
-    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash2",1, 0)
-    time.sleep(60)
+    __publishMessage(instaMsg, "instamsg/webhook", "Test message 1",1, 0)
+    time.sleep(1)
+    __publishMessage(instaMsg, "instamsg/webhook", "Test message 2",1, 0)
+    time.sleep(1)
+    __publishMessage(instaMsg, "instamsg/webhook", "Test message 3",1, 0)
+    time.sleep(1)
+    __subscribe(instaMsg, topic, qos)
+    try:
+        """
+        messages are loop backed if send to clientId topic
+        """
 
-    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash3",1, 0)
-    time.sleep(60)
+        print("Sending loopbak messages to self...")
+        auth = __getAuthJson()
+        clientId = auth['client_id']
+        authKey = auth['auth_token']
+        __publishMessage(instaMsg, clientId, "Test message 4",2, 0)
+        time.sleep(1)
+        __sendMessage(instaMsg, clientId)
+        time.sleep(1)
+        __publishMessage(instaMsg, clientId, "Test message 6",0, 0)
+    except IOError:
+        print("File auth.json not found or path is incorrect. Unable to send loopbak messages to self...")
+    time.sleep(10)
+    __unsubscribe(instaMsg, topic)
 
-    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash4",1, 0)
-    time.sleep(60)
- 
-    __publishMessage(instaMsg, "instamsg/webhook", "SenseGrow_akash5",1, 0)
-    time.sleep(60)
     
 def __onDisConnect():
     print ("Client disconnected.")
     
-def __subscribe(instaMsg, topic, qos):
+def __subscribe(instaMsg, topic, qos):  
     try:
         def _resultHandler(result):
             print ("Subscribed to topic %s with qos %d" % (topic, qos))
@@ -54,7 +119,7 @@ def __publishMessage(instaMsg, topic, msg, qos, dup):
         def _resultHandler(result):
             print (result)
             print ("Published message %s to topic %s with qos %d" % (msg, topic, qos))
-        instaMsg.publish(topic, msg, qos, dup, _resultHandler)
+        instaMsg.publish(topic, msg, qos, dup, resultHandler=_resultHandler)
     except Exception as e:
         print (str(e))
     
@@ -75,10 +140,9 @@ def __oneToOneMessageHandler(msg):
         print ("One to One Message received %s" % msg.toString())
         msg.reply("This is a reply to a one to one message.")
         
-def __sendMessage(instaMsg):
+def __sendMessage(instaMsg, clientId):
     try:
-        clienId = "92b58550-86c0-11e4-9dcf-a41f726775dd"
-        msg = "This is a test send message."
+        msg = "This is a test loopback send message."
         qos = 1
         dup = 0
         def _replyHandler(result):
@@ -89,7 +153,7 @@ def __sendMessage(instaMsg):
                     replyMessage.reply("This is a reply to a reply.")
             else:
                 print ("Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1]))
-        instaMsg.send(clienId, msg, qos, dup, _replyHandler, 120)    
+        instaMsg.send(clientId, msg, qos, dup, _replyHandler, 120)    
     except Exception as e:
         print (str(e))
     
