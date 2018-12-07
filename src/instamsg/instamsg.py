@@ -547,7 +547,6 @@ class InstaMsg(Thread):
         return (cId, userName)
     
     def __parseJson(self, jsonString):
-#         return eval(jsonString)  # Hack as not implemented Json Library
         return json.loads(jsonString)
     
     def __processHandlersTimeout(self): 
@@ -564,8 +563,11 @@ class InstaMsg(Thread):
     def __sendClientSessionData(self):
         self.__ipAddress = self.__getIpAddress(self.__connectivity) 
         signalInfo = self.__getSignalInfo()
-        session = {'network_interface':self.__connectivity, 'ip_address':self.__ipAddress, 'antenna_status': signalInfo['antenna_status'], 'signal_strength': signalInfo['signal_strength']}
-#         session = {'method' : 'GPRS', 'ip_address' : '100.106.28.23', 'antenna_status' : ' 1', 'signal_strength' : '31'}
+        session = {'network_interface':self.__connectivity, 
+                    'ip_address':self.__ipAddress, 
+                    'antenna_status': signalInfo['antenna_status'], 
+                    'signal_strength': signalInfo['signal_strength']
+                    }
         self.publish(self.__sessionTopic, str(session), INSTAMSG_QOS0, 0)
 
     def __sendClientMetadata(self):

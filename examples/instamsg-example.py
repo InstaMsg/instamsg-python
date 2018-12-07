@@ -55,7 +55,8 @@ def __startInstaMsg(provId='', provkey=''):
 
 def __getAuthJson():
     print("Trying to read auth info from auth.json ...")
-    filename =  Path(__file__).absolute().parent / 'auth.json'
+    currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
+    filename =  os.path.join(currentdir, 'auth.json')
     with open(filename,"r") as f:
         auth = json.load(f)
     f.close() 
