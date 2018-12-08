@@ -67,7 +67,6 @@ class InstaMsg(Thread):
         self.__connectivity = ""
         self.__ipAddress = ''
         self.__mqttClient = None
-        self.__mediaStream = None
         self.__initOptions(options)
         self.__publishNetworkInfoTimer = time.time()
         if(self.__enableTcp):
@@ -271,9 +270,6 @@ class InstaMsg(Thread):
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
       
  
-    def streamVideo(self,mediaUrl,mediaStreamid):
-        self.__mediaStream = MediaStream(self,mediaUrl, self.__clientId,mediaStreamid)
-
     def __getIpAddress(self, ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         return socket.inet_ntoa(fcntl.ioctl(
