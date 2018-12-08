@@ -23,11 +23,9 @@ except:
     pass
 
 from ..mqtt.client import MqttClient
-from ..http.client import HTTPClient
 from ..mqtt.result import Result
 from ..mqtt.constants import PROVISIONING_CLIENT_ID
 from .message import Message
-from .media import MediaStream
 from .errors import *
 from .constants import *
 
@@ -80,8 +78,8 @@ class InstaMsg(Thread):
             self.__connected = 0    
             self.__mqttClient.connect()
         else:
+            #Try websocket
             self.__mqttClient = None
-        self.__httpClient = HTTPClient(INSTAMSG_HTTP_HOST, self.__httpPort, enableSsl=self.enableSsl)
  
     def __init(self, clientId, authKey):
         if (clientId and authKey):
@@ -127,12 +125,10 @@ class InstaMsg(Thread):
             if(HAS_SSL):
                 self.enableSsl = 1
                 self.__port = INSTAMSG_PORT_SSL 
-                self.__httpPort = INSTAMSG_HTTPS_PORT
             else:
                 raise ImportError("SSL not supported, Please check python version and try again.")
         else: 
             self.__port = INSTAMSG_PORT
-            self.__httpPort = INSTAMSG_HTTP_PORT
         if("connectivity" in options):
             self.__connectivity = options.get("connectivity");
         else:
@@ -180,42 +176,35 @@ class InstaMsg(Thread):
         else: raise ValueError("Topic cannot be null or empty string.")
     
     def subscribe(self, topic, qos, msgHandler, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
-        if(self.__mqttClient):
-            try:
-                if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
-                self.__msgHandlers[topic] = msgHandler
-                if(topic == self.__clientId):
-                    raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
-                def _resultHandler(result):
-                    if(result.failed()):
-                        if(topic in self.__msgHandlers):
-                            del self.__msgHandlers[topic]
-                    if(callable(resultHandler)): resultHandler(result)
-                self.__mqttClient.subscribe(topic, qos, _resultHandler, timeout)
-            except Exception as e:
-                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-                raise InstaMsgSubError(str(e))
-        else:
+        try:
+            if(not callable(msgHandler)): raise ValueError('msgHandler should be a callable object.')
+            self.__msgHandlers[topic] = msgHandler
+            if(topic == self.__clientId):
+                raise ValueError("Canot subscribe to clientId. Instead set oneToOneMessageHandler.")
+            def _resultHandler(result):
+                if(result.failed()):
+                    if(topic in self.__msgHandlers):
+                        del self.__msgHandlers[topic]
+                if(callable(resultHandler)): resultHandler(result)
+            self.__mqttClient.subscribe(topic, qos, _resultHandler, timeout)
+        except Exception as e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-            raise InstaMsgSubError("Cannot subscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
+            raise InstaMsgSubError(str(e))
             
 
     def unsubscribe(self, topics, resultHandler, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT):
-        if(self.__mqttClient):
-            try:
-                def _resultHandler(result):
-                    if(result.succeeded()):
-                        for topic in topics:
-                            if(topic in self.__msgHandlers):
-                                del self.__msgHandlers[topic]
-                    if(callable(resultHandler)):resultHandler(result)
-                self.__mqttClient.unsubscribe(topics, _resultHandler, timeout)
-            except Exception as e:
-                self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-                raise InstaMsgUnSubError(str(e))
-        else:
+        try:
+            def _resultHandler(result):
+                if(result.succeeded()):
+                    for topic in topics:
+                        if(topic in self.__msgHandlers):
+                            del self.__msgHandlers[topic]
+                if(callable(resultHandler)):resultHandler(result)
+            self.__mqttClient.unsubscribe(topics, _resultHandler, timeout)
+        except Exception as e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-            raise InstaMsgUnSubError("Cannot unsubscribe as TCP is not enabled. Two way messaging only possible on TCP and not HTTP")
+            raise InstaMsgUnSubError(str(e))
+
     
     def send(self, clienId, msg, qos=INSTAMSG_QOS0, dup=0, replyHandler=None, timeout=INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT):
         try:
@@ -386,8 +375,6 @@ class InstaMsg(Thread):
         try:
             if(mqttMsg.topic == self.__clientId):
                 self.__handlePointToPointMessage(mqttMsg)
-            elif(mqttMsg.topic == self.__filesTopic):
-                self.__handleFileTransferMessage(mqttMsg)
             elif(mqttMsg.topic == self.__rebootTopic):
                 self.__handleSystemRebootMessage()
             elif(mqttMsg.topic == self.__configServerToClientTopic):
@@ -395,78 +382,13 @@ class InstaMsg(Thread):
             elif(mqttMsg.topic == self.__enableServerLoggingTopic):
                 self.__enableServerLogging(mqttMsg)
             else:
-                self.__handlePubMessageReceived(mqttMsg)
+                self.__handlePubSubMessage(mqttMsg)
 
         except Exception as e:
-            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-                
-    def __handleFileTransferMessage(self, mqttMsg):
-        msgJson = self.__parseJson(mqttMsg.payload)
-        qos, dup = mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup
-        messageId, replyTopic, method, url, filename = None, None, None, None, None
-        if('reply_to' in msgJson):
-            replyTopic = msgJson['reply_to']
-        else:
-            raise ValueError("File transfer message json should have reply_to address.")   
-        if('message_id' in msgJson):
-            messageId = msgJson['message_id']
-        else: 
-            raise ValueError("File transfer message json should have a message_id.") 
-        if('method' in msgJson):
-            method = msgJson['method']
-        else: 
-            raise ValueError("File transfer message json should have a method.") 
-        if('url' in msgJson):
-            url = msgJson['url']
-        if('filename' in msgJson):
-            filename = msgJson['filename']
-        if(replyTopic):
-            if(method == "GET" and not filename):
-                filelist = self.__getFileList()
-                msg = '{"response_id": "%s", "status": 1, "files": %s}' % (messageId, filelist)
-                self.publish(replyTopic, msg, qos, dup)
-            elif (method == "GET" and filename):
-                httpResponse = self.__httpClient.uploadFile(self.__fileUploadUrl, filename, headers={"Authorization":self.__authKey, "ClientId":self.__clientId})
-                if(httpResponse and httpResponse.status == 200):
-                    msg = '{"response_id": "%s", "status": 1, "url":"%s"}' % (messageId, httpResponse.body)
-                else:
-                    msg = '{"response_id": "%s", "status": 0}' % (messageId)
-                self.publish(replyTopic, msg, qos, dup)
-            elif ((method == "POST" or method == "PUT") and filename and url):
-                httpResponse = self.__httpClient.downloadFile(url, filename)
-                if(httpResponse and httpResponse.status == 200):
-                    msg = '{"response_id": "%s", "status": 1}' % (messageId)
-                else:
-                    msg = '{"response_id": "%s", "status": 0}' % (messageId)
-                self.publish(replyTopic, msg, qos, dup)
-            elif ((method == "DELETE") and filename):
-                try:
-                    msg = '{"response_id": "%s", "status": 1}' % (messageId)
-                    self.__deleteFile(filename)
-                    self.publish(replyTopic, msg, qos, dup)
-                except Exception as e:
-                    msg = '{"response_id": "%s", "status": 0, "error_msg":"%s"}' % (messageId, str(e))
-                    self.publish(replyTopic, msg, qos, dup)
-                    
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))                
+                 
             
-    def __getFileList(self):
-        path = os.getcwd()
-        fileList = ""
-        for root, dirs, files in os.walk(path):
-            for name in files:
-                filename = os.path.join(root, name)
-                size = os.stat(filename).st_size
-                if(fileList):
-                    fileList = fileList + ","
-                fileList = fileList + '"%s":%d' % (name, size)
-        return '{%s}' % fileList      
-    
-    def __deleteFile(self, filename):
-        path = os.getcwd()
-        filename = os.path.join(path, filename)
-        os.remove(filename)
-
-    def __handlePubMessageReceived(self, mqttMsg):     
+    def __handlePubSubMessage(self, mqttMsg):     
         msgHandler = self.__msgHandlers.get(mqttMsg.topic)
         if(msgHandler and callable(msgHandler)):
             msg = Message(mqttMsg.messageId, mqttMsg.topic, mqttMsg.payload, mqttMsg.fixedHeader.qos, mqttMsg.fixedHeader.dup)
@@ -520,7 +442,7 @@ class InstaMsg(Thread):
         except json.JSONDecodeError as e:
             #This could be a normal message published using publish 
             #e.g. loopback publish. Handle as normal pub message
-            self.__handlePubMessageReceived(mqttMsg)
+            self.__handlePubSubMessage(mqttMsg)
 
         
     def __mqttClientOptions(self, username, password, keepAliveTimer):
