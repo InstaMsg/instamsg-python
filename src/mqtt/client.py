@@ -107,9 +107,11 @@ class MqttClient:
                     self.__resetSock()
         except socket.error as msg:
             self.__resetSock()
-            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
         except MqttConnectError as msg:
-            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][MqttConnectError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
         except:
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
             
@@ -159,7 +161,8 @@ class MqttClient:
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out sending connect")
         except socket.error as msg:
             self.__resetSock()
-            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
+            self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][Exception]:: %s" % (traceback.print_exc()))
         except:
             self.__connecting = 0
             self.__log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = connect][Exception]:: %s" % (traceback.print_exc()))
@@ -507,7 +510,7 @@ class MqttClient:
         if (self.__sockInit is 0 and waitFor > 0): 
             if(not self.__waitingReconnect):
                 self.__waitingReconnect = 1
-            self.__log(MQTT_LOG_LEVEL_DEBUG, '[MqttClient]:: Last connection failed. Waiting  for %d seconds before retry...' % int(waitFor))
+                self.__log(MQTT_LOG_LEVEL_DEBUG, '[MqttClient]:: Last connection failed. Waiting  for %d seconds before retry...' % int(waitFor))
             return
         if (self.__sockInit is 0 and waitFor <= 0):
             self.__nextConnTry = t + self.reconnectTimer
