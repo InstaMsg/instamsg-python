@@ -47,7 +47,6 @@ class InstaMsg(Thread):
         self.alive.set()
         self.__clientId = clientId
         self.__authKey = authKey 
-        self.__options = options
         self.__onConnectCallBack = connectHandler   
         self.__onDisConnectCallBack = disConnectHandler  
         self.__oneToOneMessageHandler = oneToOneMessageHandler
@@ -57,12 +56,12 @@ class InstaMsg(Thread):
         self.__defaultReplyTimeout = INSTAMSG_RESULT_HANDLER_TIMEOUT
         self.__msgHandlers = {}
         self.__sendMsgReplyHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
-        self.__sslEnabled = 0
+        self.__enableTcp = 1
+        self.__enableSsl = 1
         self.__configHandler = None
         self.__rebootHandler = None
-        self.__manufacturer = ""
-        self.__model = ""
         self.__connectivity = ""
+        self.__metadata = {}
         self.__ipAddress = ''
         self.__mqttClient = None
         self.__initOptions(options)
@@ -70,7 +69,7 @@ class InstaMsg(Thread):
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
             mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
-            self.__mqttClient = MqttClient(INSTAMSG_HOST, self.__port, clientIdAndUsername[0], enableSsl=self.enableSsl, options=mqttoptions)
+            self.__mqttClient = MqttClient(INSTAMSG_HOST, self.__port, clientIdAndUsername[0], enableSsl=self.__enableSsl, options=mqttoptions)
             self.__mqttClient.onConnect(self.__onConnect)
             self.__mqttClient.onDisconnect(self.__onDisConnect)
             self.__mqttClient.onDebugMessage(self.__handleDebugMessage)
@@ -104,13 +103,12 @@ class InstaMsg(Thread):
         if( 'rebootHandler' in options): 
             if(not callable(options['rebootHandler'])): raise ValueError('rebootHandler should be a callable object.')
             self.__rebootHandler = options['rebootHandler']
-        if('enableSocket' in self.__options):
-            self.__enableTcp = options.get('enableSocket')
-        else: self.__enableTcp = 1
-        if('enableLogToServer' in self.__options):
+        if('enableTcp' in options):
+            self.__enableTcp = options.get('enableTcp')
+        if('enableLogToServer' in options):
             self.__enableLogToServer = options.get('enableLogToServer')
         else: self.__enableLogToServer = 0
-        if('logLevel' in self.__options):
+        if('logLevel' in options):
             self.__logLevel = options.get('logLevel')
             if(self.__logLevel < INSTAMSG_LOG_LEVEL_DISABLED or self.__logLevel > INSTAMSG_LOG_LEVEL_DEBUG):
                 raise ValueError("logLevel option should be in between %d and %d" % (INSTAMSG_LOG_LEVEL_DISABLED, INSTAMSG_LOG_LEVEL_DEBUG))
@@ -119,24 +117,23 @@ class InstaMsg(Thread):
             self.__keepAliveTimer = options.get('keepAliveTimer')
         else:
             self.__keepAliveTimer = INSTAMSG_KEEP_ALIVE_TIMER
-        
-        self.enableSsl = 0 
+        if('metadata' in options):
+            self.__metadata = options['metadata']
+        self.__metadata["instamsg_version"] = INSTAMSG_VERSION
+        self.__metadata["instamsg_api_version"] = INSTAMSG_API_VERSION     
         if('enableSsl' in options and options.get('enableSsl')): 
             if(HAS_SSL):
-                self.enableSsl = 1
+                self.__enableSsl = 1
                 self.__port = INSTAMSG_PORT_SSL 
             else:
                 raise ImportError("SSL not supported, Please check python version and try again.")
         else: 
+            self.__enableSsl = 0 
             self.__port = INSTAMSG_PORT
         if("connectivity" in options):
             self.__connectivity = options.get("connectivity");
         else:
             self.__connectivity = "eth0"
-        if("manufacturer" in options):
-            self.__manufacturer = options.get("manufacturer");
-        if("model" in options):
-            self.__model = options.get("model");
     
     def run(self):
         try:
@@ -256,28 +253,8 @@ class InstaMsg(Thread):
                     self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Config published to server: %s" %str(config))  
             self.publish(self.__configClientToServerTopic, message, qos=INSTAMSG_QOS1, dup=0, resultHandler=_resultHandler)
         except Exception as e:
-            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-      
- 
-    def __getIpAddress(self, ifname):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(
-            s.fileno(),
-            0x8915,  # SIOCGIFADDR
-            struct.pack('256s', bytes(ifname[:15], 'utf-8'))
-        )[20:24])
-        
-    def __getSerialNumber(self):
-        cpuserial = "0000000000000000"
-        try:
-            f = open('/proc/cpuinfo', 'r')
-            for line in f:
-                if line[0:6] == 'Serial':
-                    cpuserial = line[10:26]
-            f.close()
-        except:
-            cpuserial = "ERROR00000000000"
-        return cpuserial
+            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))   
+
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -297,19 +274,25 @@ class InstaMsg(Thread):
                 del self.__sendMsgReplyHandlers[messageId]
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
             raise Exception(str(e))
-            
-    def _generateMessageId(self):
-        messageId = self.__clientId + "-" + str(int(time.time() * 1000))
-        while(messageId in self.__sendMsgReplyHandlers):
-            messageId = self.__clientId + "-" + str(int(time.time() * 1000))
-        return messageId;
- 
+
 
     def __publishNetworkInfo(self):
         if(self.__publishNetworkInfoTimer - time.time() <= 0):
-            networkInfo = self.__getSignalInfo()
-            self.publish(self.__networkInfoTopic, str(networkInfo), INSTAMSG_QOS0, 0)
-            self.__publishNetworkInfoTimer = self.__publishNetworkInfoTimer + NETWORK_INFO_PUBLISH_INTERVAL
+            try:
+                networkInfo = self.__getSignalInfo()
+                self.publish(self.__networkInfoTopic, str(networkInfo), INSTAMSG_QOS0, 0)
+            finally:
+                self.__publishNetworkInfoTimer = self.__publishNetworkInfoTimer + NETWORK_INFO_PUBLISH_INTERVAL
+
+
+    def __getIpAddress(self, ifname):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(),
+            0x8915,  # SIOCGIFADDR
+            struct.pack('256s', bytes(ifname[:15], 'utf-8'))
+        )[20:24])
+
 
     def __getSignalInfo(self):
         result = {'antenna_status':'', 'signal_strength':''}
@@ -335,6 +318,12 @@ class InstaMsg(Thread):
         except Exception as msg:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
         return result;
+
+    def _generateMessageId(self):
+        messageId = self.__clientId + "-" + str(int(time.time() * 1000))
+        while(messageId in self.__sendMsgReplyHandlers):
+            messageId = self.__clientId + "-" + str(int(time.time() * 1000))
+        return messageId;
     
     def __enableServerLogging(self, msg):
         if (msg):
@@ -502,17 +491,7 @@ class InstaMsg(Thread):
         self.publish(self.__sessionTopic, str(session), INSTAMSG_QOS0, 0)
 
     def __sendClientMetadata(self):
-        imei = self.__getSerialNumber()
-        metadata = {
-                    'imei': imei, 'serial_number': imei, 
-                    'model': self.__model,
-                    'manufacturer':self.__manufacturer, 
-                    'firmware_version':'', 
-                    'client_version': INSTAMSG_VERSION,
-                    "instamsg_version" : INSTAMSG_VERSION,
-                    "v": INSTAMSG_API_VERSION
-                    }
-        self.publish(self.__metadataTopic, str(metadata), INSTAMSG_QOS0, 0)
+        self.publish(self.__metadataTopic, str(self.__metadata), INSTAMSG_QOS0, 0)
     
     def __handleConfigMessage(self, mqttMsg):
         msgJson = self.__parseJson(mqttMsg.payload)

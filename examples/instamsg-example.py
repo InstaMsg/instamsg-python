@@ -40,12 +40,12 @@ def start(args):
 def __startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 
+                'enableTcp':1,
                 'enableSsl':1, 
-                "connectivity": "wlan0", 
-                'manufacturer':'Sony', 
-                'model':'15CNB',
+                "connectivity": "wlan0",
                 'configHandler': __configHandler,
-                'rebootHandler': __rebootHandler
+                'rebootHandler': __rebootHandler,
+                'metadata': __getDeviceMetadata()
                 }
     # Try to get auth info from auth.json if file exists
     try:
@@ -200,6 +200,59 @@ def __configHandler(result):
 
 def __rebootHandler():
     print("Received rebbot signal from server.")
+
+
+def __getDeviceMetadata():
+    return {
+            'firmware_version':'',
+            'programming_language':'python3.6',
+            'manufacturer':'Maestro',
+            'model': 'E225', 
+            'serial_number': __getSerialNumber(),
+            'os':'',
+            'micro_controller':{
+                'make':'',
+                'model':'',
+                'ram':'',
+                'rom':''
+                },
+            'cpu':{
+                'make':'',
+                'model':''
+                },
+            'network_interfaces':[{
+                'make':'',
+                'model':'',
+                'type':'',
+                'firmware_version':'',
+                'mac_address':'',
+                'imei':''                  
+             }],
+            'memory':{
+                'ram':'',
+                'rom':''                        
+                },
+            'storage':{
+                'flash':'',
+                'external':''
+                },
+            'gps':{
+                'make':'',
+                'model':''                    
+                }
+            }
+
+def __getSerialNumber():
+    cpuserial = "0000000000000000"
+    try:
+        f = open('/proc/cpuinfo', 'r')
+        for line in f:
+            if line[0:6] == 'Serial':
+                cpuserial = line[10:26]
+        f.close()
+    except:
+        cpuserial = "ERROR00000000000"
+    return cpuserial
     
 if  __name__ == "__main__":
     rc = start(sys.argv)
