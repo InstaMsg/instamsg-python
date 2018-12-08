@@ -15,12 +15,6 @@ try:
 except:
     HAS_SSL = False  
 import traceback
-try:
-    import subprocess
-    import argparse
-    import re
-except:
-    pass
 
 from ..mqtt.client import MqttClient
 from ..mqtt.result import Result
@@ -60,11 +54,9 @@ class InstaMsg(Thread):
         self.__enableSsl = 1
         self.__configHandler = None
         self.__rebootHandler = None
-        self.__connectivity = ""
         self.__metadata = {}
         self.__mqttClient = None
         self.__initOptions(options)
-        self.__publishNetworkInfoTimer = time.time()
         if(self.__enableTcp):
             clientIdAndUsername = self.__getClientIdAndUsername(clientId)
             mqttoptions = self.__mqttClientOptions(clientIdAndUsername[1], authKey, self.__keepAliveTimer)
@@ -129,10 +121,7 @@ class InstaMsg(Thread):
         else: 
             self.__enableSsl = 0 
             self.__port = INSTAMSG_PORT
-        if("connectivity" in options):
-            self.__connectivity = options.get("connectivity");
-        else:
-            self.__connectivity = "eth0"
+
     
     def run(self):
         try:
@@ -141,7 +130,6 @@ class InstaMsg(Thread):
                     if(self.__mqttClient is not None):
                         self.__mqttClient.process()
                         self.__processHandlersTimeout()
-                        self.__publishNetworkInfo()
                 except Exception as e:
                     self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = run]- %s" % (str(e)))
                     self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))                 
@@ -254,6 +242,12 @@ class InstaMsg(Thread):
         except Exception as e:
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))   
 
+    def publishNetworkInfo(self, networkInfo):
+        networkInfo["instamsg_version"] = INSTAMSG_VERSION
+        networkInfo["instamsg_api_version"] = INSTAMSG_API_VERSION
+        message = json.dumps(networkInfo)
+        self.publish(self.__networkInfoTopic, message, INSTAMSG_QOS0, 0)
+
     
     def _send(self, messageId, clienId, msg, qos, dup, replyHandler, timeout):
         try:
@@ -274,49 +268,6 @@ class InstaMsg(Thread):
             self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
             raise Exception(str(e))
 
-
-    def __publishNetworkInfo(self):
-        if(self.__publishNetworkInfoTimer - time.time() <= 0):
-            try:
-                networkInfo = self.__getSignalInfo()
-                self.publish(self.__networkInfoTopic, str(networkInfo), INSTAMSG_QOS0, 0)
-            finally:
-                self.__publishNetworkInfoTimer = self.__publishNetworkInfoTimer + NETWORK_INFO_PUBLISH_INTERVAL
-
-
-    def __getIpAddress(self, ifname):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(
-            s.fileno(),
-            0x8915,  # SIOCGIFADDR
-            struct.pack('256s', bytes(ifname[:15], 'utf-8'))
-        )[20:24])
-
-
-    def __getSignalInfo(self):
-        result = {'antenna_status':'', 'signal_strength':''}
-        try :
-            parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
-            parser.add_argument(dest='interface', nargs='?', default=self.__connectivity,
-                        help='wlan interface (default: wlan0)')
-            args = parser.parse_args()
-            cmd = subprocess.Popen('iwconfig %s' % args.interface, shell=True,
-                               stdout=subprocess.PIPE)
-            for line in cmd.stdout:
-                line = line.decode("utf-8")
-                if 'Link Quality' in line:
-                    linkQuality = re.search('Link Quality=(.+? )', line).group(1)
-                    signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
-                    result = {
-                            'antenna_status':linkQuality, 
-                            'signal_strength':signalLevel, 
-                            "instamsg_version" : INSTAMSG_VERSION
-                            }
-                elif 'Not-Associated' in line:
-                    self.__log(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsg, method = getSignalInfo]:: No signal.") 
-        except Exception as msg:
-            self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
-        return result;
 
     def _generateMessageId(self):
         messageId = self.__clientId + "-" + str(int(time.time() * 1000))
@@ -478,7 +429,8 @@ class InstaMsg(Thread):
 
     def __sendClientMetadata(self):
         try:
-            self.publish(self.__infoTopic, str(self.__metadata), INSTAMSG_QOS0, 0)
+            message = json.dumps(self.__metadata)
+            self.publish(self.__infoTopic, message, INSTAMSG_QOS0, 0)
         except:
             self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Error publishing client metadata. Continuing...")
     

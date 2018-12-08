@@ -1,6 +1,12 @@
 import os,sys
 import json
+import time
 import inspect
+import random
+import subprocess
+import argparse
+import re
+
 
 #add parent directory to path so that modules can be imported when example 
 #script directly run from current folder 
@@ -11,13 +17,11 @@ currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentfram
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir) 
 
-
 from src.instamsg import instamsg
-import sys
-import time
 
 clientId = ''
 authKey = ''
+INSTAMSG_CONNECTED = False
 
 def start(args): 
     try:      
@@ -32,23 +36,40 @@ def start(args):
         
         provId = "12345678"
         provkey = "12345678"
-        __startInstaMsg(provId, provkey)
-
+        instaMsg = __startInstaMsg(provId, provkey)
+        if(instaMsg):
+            networkInfoPublishInterval = 10
+            publishNetworkInfoTimer = time.time()
+            while 1:
+                # Periodically publish network info to InstaMsg cloud
+                if(INSTAMSG_CONNECTED and publishNetworkInfoTimer - time.time() <= 0):
+                    try:
+                        networkInfo = __getNetworkInfo("wlan0")
+                        if(networkInfo): instaMsg.publishNetworkInfo(networkInfo)
+                    except Exception as e:
+                        print("Error while publishing periodic network info: %s" % str(e))
+                    finally:
+                        publishNetworkInfoTimer = publishNetworkInfoTimer + networkInfoPublishInterval
+                time.sleep(10) #
     except:
        print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1]))) 
+    finally:
+        instaMsg = None
+
 
 def __startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 
                 'enableTcp':1,
                 'enableSsl':1, 
-                "connectivity": "wlan0",
                 'configHandler': __configHandler,
                 'rebootHandler': __rebootHandler,
                 'metadata': __getDeviceMetadata()
                 }
     # Try to get auth info from auth.json if file exists
     try:
+        global clientId, authKey
+        instaMsg = None
         auth = __getAuthJson()
         clientId = auth['client_id']
         authKey = auth['auth_token']
@@ -56,12 +77,16 @@ def __startInstaMsg(provId='', provkey=''):
         client_ssl_certificate = auth['certificate']
         client_ssl_certificate_key = auth['key']
         instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
-        instaMsg.start()            
+        instaMsg.start()  
+        return instaMsg       
     except IOError:
         print("File auth.json not found or path is incorrect. Trying provisioning...")
-        instamsg.InstaMsg.provision(provId, provkey, __provisionHandler)
+        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, __provisionHandler)
+    finally:
+        return instaMsg
 
 def __getAuthJson():
+    auth = None
     print("Trying to read auth info from auth.json ...")
     currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
     filename =  os.path.join(currentdir, 'auth.json')
@@ -81,16 +106,19 @@ def __provisionHandler(provMsg):
     """
     print(" Received provisioning response %s . Saving to file auth.json" % provMsg) 
     try:
-        filename =  Path(__file__).absolute().parent / 'auth.json'
+        currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
+        filename =  os.path.join(currentdir, 'auth.json')
         with open(filename,"w+") as f:
             json.dump(provMsg ,f)
         f.close()
-        __startInstaMsg()
+        return __startInstaMsg()
     except IOError:
         print("File not found or path is incorrect")
 
 
 def __onConnect(instaMsg):
+    global INSTAMSG_CONNECTED
+    INSTAMSG_CONNECTED = True
     topic = "subtopic1"
     qos = 0
     __publishMessage(instaMsg, "instamsg/webhook", "Test message 1",1, 0)
@@ -130,6 +158,8 @@ def __onConnect(instaMsg):
 
     
 def __onDisConnect():
+    global INSTAMSG_CONNECTED
+    INSTAMSG_CONNECTED = False
     print ("Client disconnected.")
     
 def __subscribe(instaMsg, topic, qos):  
@@ -241,6 +271,57 @@ def __getDeviceMetadata():
                 'model':''                    
                 }
             }
+
+def __getIpAddress(interfaceName):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    return socket.inet_ntoa(fcntl.ioctl(
+        s.fileno(),
+        0x8915,  # SIOCGIFADDR
+        struct.pack('256s', bytes(interfaceName[:15], 'utf-8'))
+    )[20:24])
+
+
+def __getNetworkInfo(interfaceName):
+    result = None
+    try :
+        parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
+        parser.add_argument(dest='interface', nargs='?', 
+                            default=interfaceName,
+                            help='wlan interface (default: wlan0)')
+        args = parser.parse_args()
+        cmd = subprocess.Popen('iwconfig %s' % args.interface, shell=True,
+                           stdout=subprocess.PIPE)
+        for line in cmd.stdout:
+            line = line.decode("utf-8")
+            if 'Link Quality' in line:
+                linkQuality = re.search('Link Quality=(.+? )', line).group(1)
+                signalLevel = re.search('Signal level=(.+?) dBm', line).group(1)
+                result = {
+                        'network_interface': interfaceName,
+                        'antenna_status':linkQuality, 
+                        'signal_strength':signalLevel,
+                        'mac_id':'',
+                        'imei':'',
+                        'msisdn':'',
+                        'iccid':''
+                        }
+            elif 'Not-Associated' in line:
+                print("No signal information.")
+            # No information mock for testing
+            if(not result):
+                result = {
+                        'network_interface': interfaceName,
+                        'antenna_status':'1', 
+                        'signal_strength':(-1 * random.randint(0,100)),
+                        'mac_id':'00:16:B6:C5:0C:FF',
+                        'imei':'',
+                        'msisdn':'',
+                        'iccid':''
+                        } 
+    except Exception as msg:
+        print("Error getting network interface info- %s" % (traceback.print_exc()))
+    finally:
+        return result;
 
 def __getSerialNumber():
     cpuserial = "0000000000000000"
