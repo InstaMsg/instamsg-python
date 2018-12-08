@@ -207,7 +207,7 @@ def __getDeviceMetadata():
             'firmware_version':'',
             'programming_language':'python3.6',
             'manufacturer':'Maestro',
-            'model': 'E225', 
+            'model': 'E22510', 
             'serial_number': __getSerialNumber(),
             'os':'',
             'micro_controller':{
@@ -217,8 +217,8 @@ def __getDeviceMetadata():
                 'rom':''
                 },
             'cpu':{
-                'make':'',
-                'model':''
+                'make':'intel',
+                'model':'i3'
                 },
             'network_interfaces':[{
                 'make':'',
@@ -229,11 +229,11 @@ def __getDeviceMetadata():
                 'imei':''                  
              }],
             'memory':{
-                'ram':'',
-                'rom':''                        
+                'ram':'10',
+                'rom':'100'                        
                 },
             'storage':{
-                'flash':'',
+                'flash':1024,
                 'external':''
                 },
             'gps':{

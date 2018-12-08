@@ -62,7 +62,6 @@ class InstaMsg(Thread):
         self.__rebootHandler = None
         self.__connectivity = ""
         self.__metadata = {}
-        self.__ipAddress = ''
         self.__mqttClient = None
         self.__initOptions(options)
         self.__publishNetworkInfoTimer = time.time()
@@ -344,8 +343,6 @@ class InstaMsg(Thread):
     def __onConnect(self, mqttClient):
         self.__handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
         self.__connected = 1
-        self.__ipAddress = self.__getIpAddress(self.__connectivity)
-        self.__sendClientSessionData()
         self.__sendClientMetadata()
         self.subscribe(self.__enableServerLoggingTopic, INSTAMSG_QOS0, self.__enableServerLogging)
         time.sleep(10)
@@ -478,20 +475,12 @@ class InstaMsg(Thread):
                     value['handler'] = None
                 del self.__sendMsgReplyHandlers[key]
   
-    def __sendClientSessionData(self):
-        self.__ipAddress = self.__getIpAddress(self.__connectivity) 
-        signalInfo = self.__getSignalInfo()
-        session = {
-                    'network_interface':self.__connectivity, 
-                    'ip_address':self.__ipAddress, 
-                    'antenna_status': signalInfo['antenna_status'], 
-                    'signal_strength': signalInfo['signal_strength'],
-                    "v": INSTAMSG_API_VERSION
-                    }
-        self.publish(self.__sessionTopic, str(session), INSTAMSG_QOS0, 0)
 
     def __sendClientMetadata(self):
-        self.publish(self.__metadataTopic, str(self.__metadata), INSTAMSG_QOS0, 0)
+        try:
+            self.publish(self.__infoTopic, str(self.__metadata), INSTAMSG_QOS0, 0)
+        except:
+            self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Error publishing client metadata. Continuing...")
     
     def __handleConfigMessage(self, mqttMsg):
         msgJson = self.__parseJson(mqttMsg.payload)
