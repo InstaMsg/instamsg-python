@@ -28,7 +28,8 @@ setup(
     packages=setuptools.find_packages('src'),
     package_dir={'': 'src'},
     install_requires=[
-        'pyOpenSSL>=18.0.0'
+        'pyOpenSSL>=18.0.0',
+        'websocket-client>=0.54.0'
     ],
     classifiers=[
         'Programming Language :: Python :: 3 :: Only',

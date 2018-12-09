@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+#
+__version__ = "1.01.00"
 
 # Logging Levels
 INSTAMSG_LOG_LEVEL_DISABLED = 0
@@ -39,4 +41,4 @@ INSTAMSG_API_VERSION = "1.0"
 INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
 INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
 # InstaMsg Versions // Update every time when some changes happened in this file.
-INSTAMSG_VERSION = "1.01.00"
+INSTAMSG_VERSION = __version__
