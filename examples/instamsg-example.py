@@ -36,7 +36,7 @@ def start(args):
         
         provId = "12345678"
         provkey = "12345678"
-        instaMsg = __startInstaMsg(provId, provkey)
+        instaMsg = _startInstaMsg(provId, provkey)
         if(instaMsg):
             networkInfoPublishInterval = 10
             publishNetworkInfoTimer = time.time()
@@ -44,7 +44,7 @@ def start(args):
                 # Periodically publish network info to InstaMsg cloud
                 if(INSTAMSG_CONNECTED and publishNetworkInfoTimer - time.time() <= 0):
                     try:
-                        networkInfo = __getNetworkInfo("wlan0")
+                        networkInfo = _getNetworkInfo("wlan0")
                         if(networkInfo): instaMsg.publishNetworkInfo(networkInfo)
                     except Exception as e:
                         print("Error while publishing periodic network info: %s" % str(e))
@@ -57,35 +57,35 @@ def start(args):
         instaMsg = None
 
 
-def __startInstaMsg(provId='', provkey=''):
+def _startInstaMsg(provId='', provkey=''):
     options = {
-                'logLevel':instamsg.INSTAMSG_LOG_LEVEL_DEBUG, 
-                'enableTcp':1,
-                'enableSsl':1, 
-                'configHandler': __configHandler,
-                'rebootHandler': __rebootHandler,
-                'metadata': __getDeviceMetadata()
+                'logLevel':instamsg.INSTAMSG_LOG_LEVEL_INFO, 
+                'enableTcp':0, # 1 TCP 0 WebSocket
+                'enableSsl':0, 
+                'configHandler': _configHandler,
+                'rebootHandler': _rebootHandler,
+                'metadata': _getDeviceMetadata()
                 }
     # Try to get auth info from auth.json if file exists
     try:
         global clientId, authKey
         instaMsg = None
-        auth = __getAuthJson()
+        auth = _getAuthJson()
         clientId = auth['client_id']
         authKey = auth['auth_token']
         enable_client_side_ssl_certificate = auth['auth_token']
         client_ssl_certificate = auth['certificate']
         client_ssl_certificate_key = auth['key']
-        instaMsg = instamsg.InstaMsg(clientId, authKey, __onConnect, __onDisConnect, __oneToOneMessageHandler, options)
+        instaMsg = instamsg.InstaMsg(clientId, authKey, _onConnect, _onDisConnect, _oneToOneMessageHandler, options)
         instaMsg.start()  
         return instaMsg       
     except IOError:
         print("File auth.json not found or path is incorrect. Trying provisioning...")
-        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, __provisionHandler)
+        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler)
     finally:
         return instaMsg
 
-def __getAuthJson():
+def _getAuthJson():
     auth = None
     print("Trying to read auth info from auth.json ...")
     currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
@@ -96,7 +96,7 @@ def __getAuthJson():
     return auth   
 
 
-def __provisionHandler(provMsg):
+def _provisionHandler(provMsg):
     """
     1. On succesfull provisioning a file auth.json would be created in 
        current working directory.
@@ -111,23 +111,23 @@ def __provisionHandler(provMsg):
         with open(filename,"w+") as f:
             json.dump(provMsg ,f)
         f.close()
-        return __startInstaMsg()
+        return _startInstaMsg()
     except IOError:
         print("File not found or path is incorrect")
 
 
-def __onConnect(instaMsg):
+def _onConnect(instaMsg):
     global INSTAMSG_CONNECTED
     INSTAMSG_CONNECTED = True
     topic = "subtopic1"
     qos = 0
-    __publishMessage(instaMsg, "instamsg/webhook", "Test message 1",1, 0)
+    _publishMessage(instaMsg, "instamsg/webhook", "Test message 1",1, 0)
     time.sleep(1)
-    __publishMessage(instaMsg, "instamsg/webhook", "Test message 2",1, 0)
+    _publishMessage(instaMsg, "instamsg/webhook", "Test message 2",1, 0)
     time.sleep(1)
-    __publishMessage(instaMsg, "instamsg/webhook", "Test message 3",1, 0)
+    _publishMessage(instaMsg, "instamsg/webhook", "Test message 3",1, 0)
     time.sleep(1)
-    __subscribe(instaMsg, topic, qos)
+    _subscribe(instaMsg, topic, qos)
     try:
         """
         Messages are loop backed if send to clientId topic.
@@ -139,38 +139,38 @@ def __onConnect(instaMsg):
         """
 
         print("Sending loopbak messages to self...")
-        auth = __getAuthJson()
+        auth = _getAuthJson()
         clientId = auth['client_id']
         authKey = auth['auth_token']
-        __publishMessage(instaMsg, clientId, "Test message 4",2, 0)
+        _publishMessage(instaMsg, clientId, "Test message 4",2, 0)
         time.sleep(1)
-        __sendMessage(instaMsg, clientId)
+        _sendMessage(instaMsg, clientId)
         time.sleep(1)
-        __publishMessage(instaMsg, clientId, "Test message 6",0, 0)
+        _publishMessage(instaMsg, clientId, "Test message 6",0, 0)
     except IOError:
         print("File auth.json not found or path is incorrect. Unable to send loopbak messages to self...")
     time.sleep(10)
-    __unsubscribe(instaMsg, topic)
+    _unsubscribe(instaMsg, topic)
     config={
             "test":1
             }
-    __publishConfig(instaMsg, config)
+    _publishConfig(instaMsg, config)
 
     
-def __onDisConnect():
+def _onDisConnect():
     global INSTAMSG_CONNECTED
     INSTAMSG_CONNECTED = False
     print ("Client disconnected.")
     
-def __subscribe(instaMsg, topic, qos):  
+def _subscribe(instaMsg, topic, qos):  
     try:
         def _resultHandler(result):
             print ("Subscribed to topic %s with qos %d" % (topic, qos))
-        instaMsg.subscribe(topic, qos, __messageHandler, _resultHandler)
+        instaMsg.subscribe(topic, qos, _messageHandler, _resultHandler)
     except Exception as e:
         print (str(e))
     
-def __publishMessage(instaMsg, topic, msg, qos, dup):
+def _publishMessage(instaMsg, topic, msg, qos, dup):
     try:
         def _resultHandler(result):
             print (result)
@@ -179,7 +179,7 @@ def __publishMessage(instaMsg, topic, msg, qos, dup):
     except Exception as e:
         print (str(e))
     
-def __unsubscribe(instaMsg, topic):
+def _unsubscribe(instaMsg, topic):
     try:
         def _resultHandler(result):
             print ("UnSubscribed from topic %s" % topic)
@@ -187,16 +187,16 @@ def __unsubscribe(instaMsg, topic):
     except Exception as e:
         print (str(e))
         
-def __messageHandler(mqttMessage):
+def _messageHandler(mqttMessage):
         if(mqttMessage):
             print ("Received message %s" % str(mqttMessage.toString()))
         
-def __oneToOneMessageHandler(msg):
+def _oneToOneMessageHandler(msg):
     if(msg):
         print ("One to One Message received %s" % msg.toString())
         msg.reply("This is a reply to a one to one message.")
         
-def __sendMessage(instaMsg, clientId):
+def _sendMessage(instaMsg, clientId):
     try:
         msg = "This is a test loopback send message."
         qos = 1
@@ -213,7 +213,7 @@ def __sendMessage(instaMsg, clientId):
     except Exception as e:
         print (str(e))
 
-def __publishConfig(instaMsg, config):
+def _publishConfig(instaMsg, config):
     try:
         def _resultHandler(result):
             print ("Published config %s" % json.dumps(config))
@@ -222,23 +222,23 @@ def __publishConfig(instaMsg, config):
     instaMsg.publishConfig(config, _resultHandler)
 
 
-def __configHandler(result):
+def _configHandler(result):
     if(result.succeeded()):
         configJson = result.result()
         print("Received config from server: %s" % json.dumps(configJson))
 
 
-def __rebootHandler():
+def _rebootHandler():
     print("Received rebbot signal from server.")
 
 
-def __getDeviceMetadata():
+def _getDeviceMetadata():
     return {
             'firmware_version':'',
             'programming_language':'python3.6',
             'manufacturer':'Maestro',
             'model': 'E22510', 
-            'serial_number': __getSerialNumber(),
+            'serial_number': _getSerialNumber(),
             'os':'',
             'micro_controller':{
                 'make':'',
@@ -272,7 +272,7 @@ def __getDeviceMetadata():
                 }
             }
 
-def __getIpAddress(interfaceName):
+def _getIpAddress(interfaceName):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     return socket.inet_ntoa(fcntl.ioctl(
         s.fileno(),
@@ -281,7 +281,7 @@ def __getIpAddress(interfaceName):
     )[20:24])
 
 
-def __getNetworkInfo(interfaceName):
+def _getNetworkInfo(interfaceName):
     result = None
     try :
         parser = argparse.ArgumentParser(description='Display WLAN signal strength.')
@@ -323,7 +323,7 @@ def __getNetworkInfo(interfaceName):
     finally:
         return result;
 
-def __getSerialNumber():
+def _getSerialNumber():
     cpuserial = "0000000000000000"
     try:
         f = open('/proc/cpuinfo', 'r')

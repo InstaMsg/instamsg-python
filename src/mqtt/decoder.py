@@ -14,158 +14,158 @@ class MqttDecoder:
     BAD = 6
     
     def __init__(self):
-        self.__data = b''
-        self.__init()
-        self.__msgFactory = MqttMsgFactory()
+        self._data = b''
+        self._init()
+        self._msgFactory = MqttMsgFactory()
         
-    def __state(self):
-        return self.__state
+    def _state(self):
+        return self._state
     
     def decode(self, data=b''):
-        if(data or self.__data ):
-            self.__data = self.__data.join([data])
-            if(self.__state == self.READING_FIXED_HEADER_FIRST):
-                self.__decodeFixedHeaderFirstByte(self.__getByteStr())
-                self.__state = self.READING_FIXED_HEADER_REMAINING
-            if(self.__state == self.READING_FIXED_HEADER_REMAINING):
-                self.__decodeFixedHeaderRemainingLength()
-                if (self.__fixedHeader.messageType == PUBLISH and not self.__variableHeader):
-                    self.__initPubVariableHeader()
-            if(self.__state == self.READING_VARIABLE_HEADER):
-                self.__decodeVariableHeader()
-            if(self.__state == self.READING_PAYLOAD):
-                bytesRemaining = self.__remainingLength - (self.__bytesConsumedCounter - self.__remainingLengthCounter - 1)
-                self.__decodePayload(bytesRemaining)
-            if(self.__state == self.DISCARDING_MESSAGE):
-                bytesLeftToDiscard = self.__remainingLength - self.__bytesDiscardedCounter
-                if (bytesLeftToDiscard <= len(self.__data)):
+        if(data or self._data ):
+            self._data = self._data.join([data])
+            if(self._state == self.READING_FIXED_HEADER_FIRST):
+                self._decodeFixedHeaderFirstByte(self._getByteStr())
+                self._state = self.READING_FIXED_HEADER_REMAINING
+            if(self._state == self.READING_FIXED_HEADER_REMAINING):
+                self._decodeFixedHeaderRemainingLength()
+                if (self._fixedHeader.messageType == PUBLISH and not self._variableHeader):
+                    self._initPubVariableHeader()
+            if(self._state == self.READING_VARIABLE_HEADER):
+                self._decodeVariableHeader()
+            if(self._state == self.READING_PAYLOAD):
+                bytesRemaining = self._remainingLength - (self._bytesConsumedCounter - self._remainingLengthCounter - 1)
+                self._decodePayload(bytesRemaining)
+            if(self._state == self.DISCARDING_MESSAGE):
+                bytesLeftToDiscard = self._remainingLength - self._bytesDiscardedCounter
+                if (bytesLeftToDiscard <= len(self._data)):
                     bytesToDiscard = bytesLeftToDiscard
-                else: bytesToDiscard = len(self.__data)
-                self.__bytesDiscardedCounter = self.__bytesDiscardedCounter + bytesToDiscard
-                self.__data = self.__data[0:(bytesToDiscard - 1)] 
-                if(self.__bytesDiscardedCounter == self.__remainingLength):
-                    e = self.__error
-                    self.__init()
+                else: bytesToDiscard = len(self._data)
+                self._bytesDiscardedCounter = self._bytesDiscardedCounter + bytesToDiscard
+                self._data = self._data[0:(bytesToDiscard - 1)] 
+                if(self._bytesDiscardedCounter == self._remainingLength):
+                    e = self._error
+                    self._init()
                     # Discard any data that is there.
-                    self.__data = b''
+                    self._data = b''
                     raise MqttDecoderError(e) 
-            if(self.__state == self.MESSAGE_READY):
+            if(self._state == self.MESSAGE_READY):
                 # returns a tuple of (mqttMessage, dataRemaining)
-                mqttMsg = self.__msgFactory.message(self.__fixedHeader, self.__variableHeader, self.__payload)
-                self.__init()
+                mqttMsg = self._msgFactory.message(self._fixedHeader, self._variableHeader, self._payload)
+                self._init()
                 return mqttMsg
-            if(self.__state == self.BAD):
+            if(self._state == self.BAD):
                 # Discard any data that is there.
-                e = self.__error
-                self.__init()
+                e = self._error
+                self._init()
                 raise MqttFrameError(e)  
         return None 
             
-    def __decodeFixedHeaderFirstByte(self, byteStr):
+    def _decodeFixedHeaderFirstByte(self, byteStr):
         byte = ord(byteStr)
-        self.__fixedHeader.messageType = (byte & 0xF0)
-        self.__fixedHeader.dup = (byte & 0x08) >> 3
-        self.__fixedHeader.qos = (byte & 0x06) >> 1
-        self.__fixedHeader.retain = (byte & 0x01)
+        self._fixedHeader.messageType = (byte & 0xF0)
+        self._fixedHeader.dup = (byte & 0x08) >> 3
+        self._fixedHeader.qos = (byte & 0x06) >> 1
+        self._fixedHeader.retain = (byte & 0x01)
     
-    def __decodeFixedHeaderRemainingLength(self):
-            while (self.__data):
-                byte = ord(self.__getByteStr())
-                self.__remainingLength += (byte & 127) * self.__multiplier
-                self.__multiplier *= 128
-                self.__remainingLengthCounter = self.__remainingLengthCounter + 1
-                if(self.__remainingLengthCounter > 4):
-                    self.__state = self.BAD
-                    self.__error = ('MqttDecoder: Error in decoding remaining length in message fixed header.') 
+    def _decodeFixedHeaderRemainingLength(self):
+            while (self._data):
+                byte = ord(self._getByteStr())
+                self._remainingLength += (byte & 127) * self._multiplier
+                self._multiplier *= 128
+                self._remainingLengthCounter = self._remainingLengthCounter + 1
+                if(self._remainingLengthCounter > 4):
+                    self._state = self.BAD
+                    self._error = ('MqttDecoder: Error in decoding remaining length in message fixed header.') 
                     break
                 if((byte & 128) == 0):
-                    self.__state = self.READING_VARIABLE_HEADER
-                    self.__fixedHeader.remainingLength = self.__remainingLength
+                    self._state = self.READING_VARIABLE_HEADER
+                    self._fixedHeader.remainingLength = self._remainingLength
                     break
                 
-    def __initPubVariableHeader(self):
-        self.__variableHeader['topicLength'] = None
-        self.__variableHeader['messageId'] = None
-        self.__variableHeader['topic'] = None
+    def _initPubVariableHeader(self):
+        self._variableHeader['topicLength'] = None
+        self._variableHeader['messageId'] = None
+        self._variableHeader['topic'] = None
         
 
-    def __decodeVariableHeader(self):
-        if self.__fixedHeader.messageType in [CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ]:
-            self.__state = self.DISCARDING_MESSAGE
-            self.__error = ('MqttDecoder: Client cannot receive CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ message type.') 
-        elif self.__fixedHeader.messageType == CONNACK:
-            if(self.__fixedHeader.remainingLength != 2):
-                self.__state = self.BAD
-                self.__error = ('MqttDecoder: Mqtt CONNACK message should have remaining length 2 received %s.' % self.__fixedHeader.remainingLength) 
-            elif(len(self.__data) < 2):
+    def _decodeVariableHeader(self):
+        if self._fixedHeader.messageType in [CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ]:
+            self._state = self.DISCARDING_MESSAGE
+            self._error = ('MqttDecoder: Client cannot receive CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ message type.') 
+        elif self._fixedHeader.messageType == CONNACK:
+            if(self._fixedHeader.remainingLength != 2):
+                self._state = self.BAD
+                self._error = ('MqttDecoder: Mqtt CONNACK message should have remaining length 2 received %s.' % self._fixedHeader.remainingLength) 
+            elif(len(self._data) < 2):
                 pass  # let for more bytes come
             else:
-                self.__getByteStr()  # discard reserved byte
-                self.__variableHeader['connectReturnCode'] = ord(self.__getByteStr())
-                self.__state = self.MESSAGE_READY
-        elif self.__fixedHeader.messageType == PROVACK:
-            if(len(self.__data) < 2):
+                self._getByteStr()  # discard reserved byte
+                self._variableHeader['connectReturnCode'] = ord(self._getByteStr())
+                self._state = self.MESSAGE_READY
+        elif self._fixedHeader.messageType == PROVACK:
+            if(len(self._data) < 2):
                 pass  # let for more bytes come
             else:
-                self.__getByteStr()  # discard reserved byte
-                self.__variableHeader['provisionReturnCode'] = ord(self.__getByteStr())
-                self.__state = self.READING_PAYLOAD        
-        elif self.__fixedHeader.messageType == SUBACK:
-            messageId = self.__decodeMsbLsb()
+                self._getByteStr()  # discard reserved byte
+                self._variableHeader['provisionReturnCode'] = ord(self._getByteStr())
+                self._state = self.READING_PAYLOAD        
+        elif self._fixedHeader.messageType == SUBACK:
+            messageId = self._decodeMsbLsb()
             if(messageId is not None):
-                self.__variableHeader['messageId'] = messageId
-                self.__state = self.READING_PAYLOAD
-        elif self.__fixedHeader.messageType in [UNSUBACK, PUBACK, PUBREC, PUBCOMP, PUBREL]:
-            messageId = self.__decodeMsbLsb()
+                self._variableHeader['messageId'] = messageId
+                self._state = self.READING_PAYLOAD
+        elif self._fixedHeader.messageType in [UNSUBACK, PUBACK, PUBREC, PUBCOMP, PUBREL]:
+            messageId = self._decodeMsbLsb()
             if(messageId is not None):
-                self.__variableHeader['messageId'] = messageId
-                self.__state = self.MESSAGE_READY
-        elif self.__fixedHeader.messageType == PUBLISH:
-            if(self.__variableHeader['topic'] is None):
-                self.__decodeTopic()
-            if (self.__fixedHeader.qos > MQTT_QOS0 and self.__variableHeader['topic'] is not None and self.__variableHeader['messageId'] is None):
-                self.__variableHeader['messageId'] = self.__decodeMsbLsb()
-            if (self.__variableHeader['topic'] is not None and (self.__fixedHeader.qos == MQTT_QOS0 or self.__variableHeader['messageId'] is not None)):
-                self.__state = self.READING_PAYLOAD
-        elif self.__fixedHeader.messageType in [PINGRESP, DISCONNECT]:
-            self.__mqttMsg = self.__msgFactory.message(self.__fixedHeader)
-            self.__state = self.MESSAGE_READY
+                self._variableHeader['messageId'] = messageId
+                self._state = self.MESSAGE_READY
+        elif self._fixedHeader.messageType == PUBLISH:
+            if(self._variableHeader['topic'] is None):
+                self._decodeTopic()
+            if (self._fixedHeader.qos > MQTT_QOS0 and self._variableHeader['topic'] is not None and self._variableHeader['messageId'] is None):
+                self._variableHeader['messageId'] = self._decodeMsbLsb()
+            if (self._variableHeader['topic'] is not None and (self._fixedHeader.qos == MQTT_QOS0 or self._variableHeader['messageId'] is not None)):
+                self._state = self.READING_PAYLOAD
+        elif self._fixedHeader.messageType in [PINGRESP, DISCONNECT]:
+            self._mqttMsg = self._msgFactory.message(self._fixedHeader)
+            self._state = self.MESSAGE_READY
         else:
-            self.__state = self.DISCARDING_MESSAGE
-            self.__error = ('MqttDecoder: Unrecognised message type - %s' % str(self.__fixedHeader.messageType)) 
+            self._state = self.DISCARDING_MESSAGE
+            self._error = ('MqttDecoder: Unrecognised message type - %s' % str(self._fixedHeader.messageType)) 
             
-    def __decodePayload(self, bytesRemaining):
-        paloadBytes = self.__getNBytesStr(bytesRemaining)
+    def _decodePayload(self, bytesRemaining):
+        paloadBytes = self._getNBytesStr(bytesRemaining)
         if(paloadBytes is not None):
-            if self.__fixedHeader.messageType == SUBACK:
+            if self._fixedHeader.messageType == SUBACK:
                 grantedQos = []
                 numberOfBytesConsumed = 0
                 while (numberOfBytesConsumed < bytesRemaining):
                     qos = int(ord(paloadBytes[numberOfBytesConsumed]) & 0x03)
                     numberOfBytesConsumed = numberOfBytesConsumed + 1
                     grantedQos.append(qos)
-                self.__payload = grantedQos
-                self.__state = self.MESSAGE_READY
-            elif self.__fixedHeader.messageType in (PUBLISH, PROVACK):
-                self.__payload = paloadBytes.decode('utf-8')
-                self.__state = self.MESSAGE_READY
+                self._payload = grantedQos
+                self._state = self.MESSAGE_READY
+            elif self._fixedHeader.messageType in (PUBLISH, PROVACK):
+                self._payload = paloadBytes.decode('utf-8')
+                self._state = self.MESSAGE_READY
     
-    def __decodeTopic(self):
-        stringLength = self.__variableHeader['topicLength']
+    def _decodeTopic(self):
+        stringLength = self._variableHeader['topicLength']
         if(stringLength is None):
-            stringLength = self.__decodeMsbLsb()
-            self.__variableHeader['topicLength'] = stringLength
-        if (self.__data and stringLength and (len(self.__data) < stringLength)):
+            stringLength = self._decodeMsbLsb()
+            self._variableHeader['topicLength'] = stringLength
+        if (self._data and stringLength and (len(self._data) < stringLength)):
             return None  # wait for more bytes
         else:
-            self.__variableHeader['topic'] = self.__getNBytesStr(stringLength).decode('utf-8')
+            self._variableHeader['topic'] = self._getNBytesStr(stringLength).decode('utf-8')
     
-    def __decodeMsbLsb(self):
-        if(len(self.__data) < 2):
+    def _decodeMsbLsb(self):
+        if(len(self._data) < 2):
             return None  # wait for 2 bytes
         else:
-            msb = self.__getByteStr()
-            lsb = self.__getByteStr()
+            msb = self._getByteStr()
+            lsb = self._getByteStr()
             intMsbLsb = ord(msb) << 8 | ord(lsb)
         if (intMsbLsb < 0 or intMsbLsb > MQTT_MAX_INT):
             return - 1
@@ -173,26 +173,26 @@ class MqttDecoder:
             return intMsbLsb
         
     
-    def __getByteStr(self):
-        return self.__getNBytesStr(1)
+    def _getByteStr(self):
+        return self._getNBytesStr(1)
     
-    def __getNBytesStr(self, n):
+    def _getNBytesStr(self, n):
         # gets n or less bytes
-        nBytes = self.__data[0:n]
-        self.__data = self.__data[n:len(self.__data)]
-        self.__bytesConsumedCounter = self.__bytesConsumedCounter + n
+        nBytes = self._data[0:n]
+        self._data = self._data[n:len(self._data)]
+        self._bytesConsumedCounter = self._bytesConsumedCounter + n
         return nBytes
     
-    def __init(self):
-        self.__state = self.READING_FIXED_HEADER_FIRST
-        self.__remainingLength = 0
-        self.__multiplier = 1
-        self.__remainingLengthCounter = 0
-        self.__bytesConsumedCounter = 0
-        self.__payloadCounter = 0
-        self.__fixedHeader = MqttFixedHeader()
-        self.__variableHeader = {}
-        self.__payload = None
-        self.__mqttMsg = None
-        self.__bytesDiscardedCounter = 0 
-        self.__error = 'MqttDecoder: Unrecognized __error'
+    def _init(self):
+        self._state = self.READING_FIXED_HEADER_FIRST
+        self._remainingLength = 0
+        self._multiplier = 1
+        self._remainingLengthCounter = 0
+        self._bytesConsumedCounter = 0
+        self._payloadCounter = 0
+        self._fixedHeader = MqttFixedHeader()
+        self._variableHeader = {}
+        self._payload = None
+        self._mqttMsg = None
+        self._bytesDiscardedCounter = 0 
+        self._error = 'MqttDecoder: Unrecognized _error'

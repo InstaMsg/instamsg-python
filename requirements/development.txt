@@ -1,1 +1,2 @@
 pyOpenSSL==18.0.0 
+websocket-client==0.54.0 
