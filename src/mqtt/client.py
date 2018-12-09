@@ -196,7 +196,7 @@ class MqttClient:
         publishMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader, payload)
         encodedMsg = self._mqttEncoder.encode(publishMsg)
         if(logging):
-            self._log(MQTT_LOG_LEVEL_DEBUG, '[MqttClient]:: sending message:%s' % publishMsg.toString())
+            self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: sending message:%s' % publishMsg.toString())
         if (qos > MQTT_QOS0 and messageId and resultHandler): 
             timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self._resultHandlers[messageId] = {'time':time.time(), 'timeout': resultHandlerTimeout, 'handler':resultHandler, 'timeOutMsg':timeOutMsg}
