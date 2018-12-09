@@ -3,6 +3,12 @@ import websocket
 from websocket import WebSocket
 from websocket._abnf import ABNF
 import traceback
+try:
+    import ssl
+    HAS_SSL = True
+except:
+    HAS_SSL = False
+
 
 from .errors import *
 from .constants import *
@@ -35,9 +41,18 @@ class MqttClientWebSocket(MqttClient):
         if(self._logLevel == MQTT_LOG_LEVEL_DEBUG):     
             websocket.enableTrace(True)
         sockopt=((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),)
-        url = "ws://%s:%s/" % (self.host, self.port)
-        self._sock = websocket.WebSocket(skip_utf8_validation = False, 
+        sslopt = None
+        if(self.enableSsl):
+            sslopt = {
+                        "cert_reqs": ssl.CERT_NONE, 
+                        "check_hostname": True
+                        }
+            url = "wss://%s:%s/" % (self.host, self.port)
+        else:
+            url = "ws://%s:%s/" % (self.host, self.port)
+        self._sock = websocket.WebSocket(skip_utf8_validation = True, 
                                         sockopt = sockopt, 
+                                        sslopt = sslopt,
                                         enable_multithread = True)
         self._sock.settimeout(MQTT_SOCKET_TIMEOUT) 
         self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Opening web socket to %s' % url)     
