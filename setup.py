@@ -25,7 +25,7 @@ setup(
     author_email='info@sensegrow.com',
     url='https://www.sensegrow.com',
     license=license,
-    packages=setuptools.find_packages('src'),
+    packages=find_packages('src'),
     package_dir={'': 'src'},
     install_requires=[
         'pyOpenSSL>=18.0.0',
