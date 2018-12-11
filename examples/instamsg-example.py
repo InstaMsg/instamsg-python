@@ -60,8 +60,8 @@ def start(args):
 def _startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_INFO, 
-                'enableTcp':0, # 1 TCP 0 WebSocket
-                'enableSsl':1, 
+                'enableTcp':1, # 1 TCP 0 WebSocket
+                'enableSsl':0, 
                 'configHandler': _configHandler,
                 'rebootHandler': _rebootHandler,
                 'metadata': _getDeviceMetadata()
@@ -79,9 +79,9 @@ def _startInstaMsg(provId='', provkey=''):
         instaMsg = instamsg.InstaMsg(clientId, authKey, _onConnect, _onDisConnect, _oneToOneMessageHandler, options)
         instaMsg.start()  
         return instaMsg       
-    except IOError:
+    except (IOError, FileNotFoundError):
         print("File auth.json not found or path is incorrect. Trying provisioning...")
-        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler)
+        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler, enableSsl=0)
     finally:
         return instaMsg
 

@@ -214,14 +214,14 @@ class InstaMsg(Thread):
             print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
    
     @classmethod        
-    def provision(cls, provId, provPin, provisionHandler, timeout = 60):
+    def provision(cls, provId, provPin, provisionHandler, enableSsl=1, timeout = 60):
         if(not callable(provisionHandler)): raise ValueError('provisionHandler should be a callable object.')
         try:
             def _log(level, message):
                 timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
                 print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))               
             _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Sending provisioning message...")      
-            mqttClient = MqttClient(INSTAMSG_HOST, INSTAMSG_PORT_SSL, PROVISIONING_CLIENT_ID, enableSsl=1)
+            mqttClient = MqttClient(INSTAMSG_HOST, INSTAMSG_PORT_SSL, PROVISIONING_CLIENT_ID, enableSsl = enableSsl )
             mqttClient.onDebugMessage(_log)
             provResponse = mqttClient.provision(provId, provPin, timeout)
             if(provResponse):

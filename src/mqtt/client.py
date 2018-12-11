@@ -451,8 +451,8 @@ class MqttClient:
         if (not (payload and provisionReturnCode in [PROVISIONING_SUCCESSFUL, PROVISIONING_SUCCESSFUL_WITH_CERT])):
             return provisioningData
         if(provisionReturnCode == PROVISIONING_SUCCESSFUL):
-            provisioningData['client_id']=payload[0:36].decode("utf-8") 
-            provisioningData['auth_token'] = payload[37:].decode("utf-8") 
+            provisioningData['client_id']=payload[0:36] 
+            provisioningData['auth_token'] = payload[37:]
             provisioningData['secure_ssl_certificate'] = 0
             provisioningData['key'] = ''
             provisioningData['certificate'] = ''
