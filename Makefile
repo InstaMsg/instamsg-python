@@ -11,7 +11,9 @@ run: venv/bin/activate requirements/development.txt
 setup: venv/bin/activate requirements/development.txt
 	. venv/bin/activate; pip install -Ur requirements/development.txt
 
-build: clean-build clean-pyc
+build: clean-build clean-pyc; python setup.py build
+
+install: clean-build clean-pyc; python setup.py install
 
 clean-build:
 	rm --force --recursive build
@@ -19,9 +21,9 @@ clean-build:
 	rm --force --recursive *.egg-info
 
 clean-pyc:
-	find . -name '*.pyc' -exec rm --force {} +
-	find . -name '*.pyo' -exec rm --force {} +
-	name '*~' -exec rm --force  {} 
+	find . -name '*.pyc' -exec rm --force {} \;
+	find . -name '*.pyo' -exec rm --force {} \;
+	find . -name '*~' -exec rm --force  {} \;
 
 test: 
 	tox tests
