@@ -3,13 +3,13 @@
 all: setup
 
 venv/bin/activate:
-	if which virtualenv-2.7 >/dev/null; then virtualenv-2.7 -p /usr/bin/python3.6 venv; else virtualenv -p /usr/bin/python3.6 venv; fi
+	if which virtualenv-2.7 >/dev/null; then virtualenv-2.7 -p python3.6 venv -v --no-wheel; else virtualenv -p python3.6 venv -v --no-wheel; fi
 
-run: venv/bin/activate requirements/development.txt
+run: venv/bin/activate
 	. venv/bin/activate; python examples/instamsg-example.py
 
-setup: venv/bin/activate requirements/development.txt
-	. venv/bin/activate; pip install -Ur requirements/development.txt
+setup: venv/bin/activate
+	. venv/bin/activate; pip install wheel --no-cache; pip install -Ur requirements/development.txt; pip install -Ur requirements/production.txt
 
 build: clean-build clean-pyc; python setup.py build
 
