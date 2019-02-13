@@ -10,7 +10,7 @@ import _thread
 from threading import Thread, Event, RLock 
 import socket
 try:
-    import ssl
+    import wolfssl
     HAS_SSL = True
 except:
     HAS_SSL = False  

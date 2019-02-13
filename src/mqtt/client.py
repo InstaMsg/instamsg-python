@@ -9,12 +9,10 @@ import traceback
 import _thread
 from threading import Thread, Event, RLock 
 import socket
-import OpenSSL.crypto
 try:
-    import ssl
-    HAS_SSL = True
+    import wolfssl
 except:
-    HAS_SSL = False
+    pass
 
 from .messages import MqttFixedHeader, MqttMsgFactory
 from .decoder import MqttDecoder
@@ -275,28 +273,21 @@ class MqttClient:
 
     def _setSocketNConnect(self):
         self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Opening socket to %s:%s' % (self.host, str(self.port)))
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.settimeout(MQTT_SOCKET_TIMEOUT)         
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)       
         if(self.enableSsl):
-            self._sock = ssl.wrap_socket(self._sock, cert_reqs=ssl.CERT_NONE)
-            self._sock.connect((self.host, self.port))
-            commonName = self._getCommonNameFromCertificate()
-            domain = self.host.split(".")[-2:]
-            domain = ".".join(domain)
-            if(commonName == domain):
-                self._sockInit = 1
-                self._waitingReconnect = 0
-                self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port)))
-            else:
-                self._log(MQTT_LOG_LEVEL_ERROR, '[MqttClient]:: Ssl certificate error. Host %s does not match host %s provide in certificate.' % (self.host, commonName))
-        else:
-            self._sock.connect((self.host, self.port))
+            # wolfssl.WolfSSL.enable_debug()
+            context = wolfssl.SSLContext(wolfssl.PROTOCOL_TLSv1_2) 
+            # context.load_cert_chain(certificate, certificate_key)
+            context.verify_mode = wolfssl.CERT_NONE
+            # context.set_ciphers("")
+            self._sock = context.wrap_socket(self._sock)
+        self._sock.connect((self.host, self.port))
         self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port))) 
     
 
     def _getDataFromSocket(self):
         try:
-            return self._sock.recv(MQTT_SOCKET_MAX_BYTES_READ)    
+            return self._sock.read(MQTT_SOCKET_MAX_BYTES_READ)    
         except socket.timeout:                
             pass
         except socket.error as msg:
@@ -552,12 +543,12 @@ class MqttClient:
             self._waitingReconnect = 0          
             
 
-    def _getCommonNameFromCertificate(self):
-        certDer = self._sock.getpeercert(binary_form=True)
-        if(certDer is not None):
-            x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certDer)
-            return x509.get_subject().commonName
-        return None
+    # def _getCommonNameFromCertificate(self):
+    #     certDer = self._sock.getpeercert(binary_form=True)
+    #     if(certDer is not None):
+    #         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certDer)
+    #         return x509.get_subject().commonName
+    #     return None
     
     def _closeSocket(self):
         try:

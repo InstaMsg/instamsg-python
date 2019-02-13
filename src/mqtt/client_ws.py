@@ -4,10 +4,9 @@ from websocket import WebSocket
 from websocket._abnf import ABNF
 import traceback
 try:
-    import ssl
-    HAS_SSL = True
+    import wolfssl
 except:
-    HAS_SSL = False
+    pass
 
 
 from .errors import *
@@ -44,7 +43,7 @@ class MqttClientWebSocket(MqttClient):
         sslopt = None
         if(self.enableSsl):
             sslopt = {
-                        "cert_reqs": ssl.CERT_NONE, 
+                        "cert_reqs": wolfssl.CERT_NONE, 
                         "check_hostname": True
                         }
             url = "wss://%s:%s/" % (self.host, self.port)

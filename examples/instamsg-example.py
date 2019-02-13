@@ -34,7 +34,7 @@ def start(args):
         5. Note down the provisioning id and pin. Set it in the below parameters.
         """
         
-        provId = "12345678"
+        provId = "12345678" 
         provkey = "12345678"
         instaMsg = _startInstaMsg(provId, provkey)
         if(instaMsg):
@@ -60,8 +60,8 @@ def start(args):
 def _startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_INFO, 
-                'enableTcp':1, # 1 TCP 0 WebSocket
-                'enableSsl':0, 
+                'enableTcp':0, # 1 TCP 0 WebSocket
+                'enableSsl':1, 
                 'configHandler': _configHandler,
                 'rebootHandler': _rebootHandler,
                 'metadata': _getDeviceMetadata()
@@ -81,7 +81,7 @@ def _startInstaMsg(provId='', provkey=''):
         return instaMsg       
     except (IOError, FileNotFoundError):
         print("File auth.json not found or path is incorrect. Trying provisioning...")
-        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler, enableSsl=0)
+        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler, enableSsl=options['enableSsl'])
     finally:
         return instaMsg
 

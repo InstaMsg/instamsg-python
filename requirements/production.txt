@@ -1,2 +1,5 @@
-pyOpenSSL==18.0.0
+#Only production requirement for build
+#=====================================
+#pyOpenSSL==18.0.0
+wolfssl==3.14.0-1
 websocket-client==0.54.0
