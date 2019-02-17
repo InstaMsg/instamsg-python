@@ -61,7 +61,7 @@ def _startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_INFO, 
                 'enableTcp':0, # 1 TCP 0 WebSocket
-                'enableSsl':1, 
+                'enableSsl':1,
                 'configHandler': _configHandler,
                 'rebootHandler': _rebootHandler,
                 'metadata': _getDeviceMetadata()

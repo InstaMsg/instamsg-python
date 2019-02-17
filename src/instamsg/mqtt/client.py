@@ -276,7 +276,7 @@ class MqttClient:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)       
         if(self.enableSsl):
             # wolfssl.WolfSSL.enable_debug()
-            context = wolfssl.SSLContext(wolfssl.PROTOCOL_TLSv1_2) 
+            context = wolfssl.SSLContext(wolfssl.PROTOCOL_SSLv23)
             # context.load_cert_chain(certificate, certificate_key)
             context.verify_mode = wolfssl.CERT_NONE
             # context.set_ciphers("")
@@ -288,7 +288,12 @@ class MqttClient:
     def _getDataFromSocket(self):
         try:
             if self._sock is not None:
-                return self._sock.read(MQTT_SOCKET_MAX_BYTES_READ)
+                if(self.enableSsl):
+                    #Error in recv of wolfssl
+                    return self._sock.read(MQTT_SOCKET_MAX_BYTES_READ)
+                else:
+                    return self._sock.recv(MQTT_SOCKET_MAX_BYTES_READ)
+
         except (wolfssl.exceptions.SSLWantWriteError, wolfssl.exceptions.SSLWantReadError):
             pass
         except socket.timeout:

@@ -1,15 +1,7 @@
 import socket
 import websocket
-from websocket import WebSocket
 from websocket._abnf import ABNF
-import traceback
-try:
-    import wolfssl
-except:
-    pass
 
-
-from .errors import *
 from .constants import *
 from .client import MqttClient
 
@@ -19,7 +11,7 @@ class MqttClientWebSocket(MqttClient):
     def _getDataFromSocket(self):
         try:
             return self._sock.recv()    
-        except (websocket.WebSocketTimeoutException, socket.timeout):                
+        except (websocket.WebSocketTimeoutException, socket.timeout):
             pass
         except Exception as e:
             self._resetSock()
@@ -29,7 +21,7 @@ class MqttClientWebSocket(MqttClient):
     def _sendallDataToSocket(self, data):
         try:
             self._sock.send(data, opcode=ABNF.OPCODE_BINARY) 
-        except (websocket.WebSocketTimeoutException, socket.timeout) as e:                
+        except (websocket.WebSocketTimeoutException, socket.timeout) as e:
             raise socket.timeout(str(e))  
         except Exception as e:                  
             self._resetSock()
@@ -43,7 +35,7 @@ class MqttClientWebSocket(MqttClient):
         sslopt = None
         if(self.enableSsl):
             sslopt = {
-                        "cert_reqs": wolfssl.CERT_NONE, 
+                        "cert_reqs": 0,
                         "check_hostname": True
                         }
             url = "wss://%s:%s/" % (self.host, self.port)
