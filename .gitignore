@@ -63,3 +63,6 @@ venv/
 #auth.json
 examples/auth.json
 auth.json
+
+#IDE
+.idea/
