@@ -418,16 +418,17 @@ class InstaMsg(Thread):
     def _parseJson(self, jsonString):
         return json.loads(jsonString)
     
-    def _processHandlersTimeout(self): 
-        for key in list(self._sendMsgReplyHandlers):
-            value = self._sendMsgReplyHandlers[key]
-            if((time.time() - value['time']) >= value['timeout']):
-                resultHandler = value['handler']
-                if(resultHandler):
-                    timeOutMsg = value['timeOutMsg']
-                    if(callable(resultHandler)): resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
-                    value['handler'] = None
-                del self._sendMsgReplyHandlers[key]
+    def _processHandlersTimeout(self):
+        if self._sendMsgReplyHandlers != {}:
+            for key in list(self._sendMsgReplyHandlers):
+                value = self._sendMsgReplyHandlers[key]
+                if((time.time() - value['time']) >= value['timeout']):
+                    resultHandler = value['handler']
+                    if(resultHandler):
+                        timeOutMsg = value['timeOutMsg']
+                        if(callable(resultHandler)): resultHandler(Result(None, 0, (INSTAMSG_ERROR_TIMEOUT, timeOutMsg)))
+                        value['handler'] = None
+                    del self._sendMsgReplyHandlers[key]
   
 
     def _sendClientMetadata(self):

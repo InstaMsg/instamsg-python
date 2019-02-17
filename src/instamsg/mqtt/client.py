@@ -287,21 +287,27 @@ class MqttClient:
 
     def _getDataFromSocket(self):
         try:
-            return self._sock.read(MQTT_SOCKET_MAX_BYTES_READ)    
-        except socket.timeout:                
+            if self._sock is not None:
+                return self._sock.read(MQTT_SOCKET_MAX_BYTES_READ)
+        except (wolfssl.exceptions.SSLWantWriteError, wolfssl.exceptions.SSLWantReadError):
+            pass
+        except socket.timeout:
             pass
         except socket.error as msg:
-            if 'timed out' in msg.message.lower():
-                # Hack as ssl library does not throw timeout error
-                pass
-            else:
-                self._resetSock()
-                self._log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = _receive][SocketError]:: %s" % (str(msg)))
+            # if 'timed out' in msg.message.lower():
+            #     # Hack as openssl library does not throw timeout error
+            #     pass
+            # else:
+            self._resetSock()
+            self._log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = _receive][SocketError]:: %s" % (str(msg)))
         
 
     def _sendallDataToSocket(self, data):
         try:
-            self._sock.sendall(data)   
+            if self._sock is not None:
+                self._sock.sendall(data)
+        except (wolfssl.exceptions.SSLWantWriteError, wolfssl.exceptions.SSLWantReadError):
+            pass
         except socket.error as msg:                  
             self._resetSock()
             raise socket.error(str("Socket error in send: %s. Connection reset." % (str(msg))))
