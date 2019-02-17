@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
 import time
-import sys
-import os
 import json
-import fcntl
-import struct
 import hashlib
 import _thread
-from threading import Thread, Event, RLock 
-import socket
+from threading import Thread, Event
+
 try:
     import wolfssl
     HAS_SSL = True
@@ -16,10 +12,10 @@ except:
     HAS_SSL = False  
 import traceback
 
-from ..mqtt.client import MqttClient
-from ..mqtt.client_ws import MqttClientWebSocket
-from ..mqtt.result import Result
-from ..mqtt.constants import PROVISIONING_CLIENT_ID
+from .mqtt.client import MqttClient
+from .mqtt.client_ws import MqttClientWebSocket
+from .mqtt.result import Result
+from .mqtt.constants import PROVISIONING_CLIENT_ID
 from .message import Message
 from .errors import *
 from .constants import *

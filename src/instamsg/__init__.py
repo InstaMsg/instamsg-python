@@ -1,0 +1,1 @@
+from .instamsg import InstaMsg
