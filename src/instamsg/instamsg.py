@@ -147,11 +147,12 @@ class InstaMsg(Thread):
             self._sendMsgReplyHandlers = None
             self._msgHandlers = None
             self._subscribers = None
-            self.alive.clear()
-            self.join()
             return 1
         except:
             return -1
+        finally:
+            self.alive.clear()
+
     
     def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT, logging=1):
         if(topic):
