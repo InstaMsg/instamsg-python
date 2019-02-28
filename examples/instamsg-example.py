@@ -48,6 +48,9 @@ logging.config.dictConfig({
         }
     })
 LOGGER = logging.getLogger(__name__)
+instamsg_log = logging.getLogger("InstaMsg")
+instamsg_log.setLevel(logging.DEBUG)
+instamsg_log.propagate = True
 
 def start(args): 
     try:      

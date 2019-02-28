@@ -33,7 +33,7 @@ class MqttClient:
             raise ValueError('MqttClient:: port cannot be null.')
         if ssl is None and enableSsl == 1:
             raise ValueError('MqttClient:: cannot enable ssl as ssl library missing')
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger("InstaMsg")
         self.errCount = 0
         self.lock = RLock()
         self.host = host
