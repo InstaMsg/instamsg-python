@@ -10,7 +10,13 @@ class MqttClientWebSocket(MqttClient):
 
     def _getDataFromSocket(self):
         try:
-            return self._sock.recv()    
+            self.lock.acquire()
+            try:
+                #Do not put any logs in this block. Will cause thread deadlock while
+                # logging via ServerLogHandler
+                return self._sock.recv()
+            finally:
+                self.lock.release()
         except (websocket.WebSocketTimeoutException, socket.timeout):
             pass
         except Exception as e:
@@ -20,7 +26,13 @@ class MqttClientWebSocket(MqttClient):
 
     def _sendallDataToSocket(self, data):
         try:
-            self._sock.send(data, opcode=ABNF.OPCODE_BINARY) 
+            self.lock.acquire()
+            try:
+                #Do not put any logs in this block. Will cause thread deadlock while
+                # logging via ServerLogHandler
+                self._sock.send(data, opcode=ABNF.OPCODE_BINARY)
+            finally:
+                self.lock.release()
         except (websocket.WebSocketTimeoutException, socket.timeout) as e:
             raise socket.timeout(str(e))  
         except Exception as e:                  

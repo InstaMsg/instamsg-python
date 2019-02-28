@@ -133,7 +133,7 @@ class MqttClient:
                 fixedHeader = MqttFixedHeader(CONNECT, qos=0, dup=0, retain=0)
                 provisionMsg = self._mqttMsgFactory.message(fixedHeader, options, options)
                 encodedMsg = self._mqttEncoder.encode(provisionMsg)
-                self._sendall(encodedMsg)
+                self._sendallDataToSocket(encodedMsg)
                 timeout = time.time() + timeout
                 while (timeout > time.time()):
                     time.sleep(10)
@@ -154,7 +154,7 @@ class MqttClient:
                     fixedHeader = MqttFixedHeader(CONNECT, qos=0, dup=0, retain=0)
                     connectMsg = self._mqttMsgFactory.message(fixedHeader, self.options, self.options)
                     encodedMsg = self._mqttEncoder.encode(connectMsg)
-                    self._sendall(encodedMsg)
+                    self._sendallDataToSocket(encodedMsg)
         except socket.timeout:
             self._connecting = 0
             self.logger.error("Socket timed out sending connect.")
@@ -176,7 +176,7 @@ class MqttClient:
                     fixedHeader = MqttFixedHeader(DISCONNECT, qos=0, dup=0, retain=0)
                     disConnectMsg = self._mqttMsgFactory.message(fixedHeader)
                     encodedMsg = self._mqttEncoder.encode(disConnectMsg)
-                    self._sendall(encodedMsg)
+                    self._sendallDataToSocket(encodedMsg)
             except Exception as e:
                 self.logger.error("Unknown error in socket connect  %s" % (str(e)))
                 self.logger.debug("", exc_info=True)
@@ -203,7 +203,7 @@ class MqttClient:
             timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
                                                'handler': resultHandler, 'timeOutMsg': timeOutMsg}
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)
         if (qos == MQTT_QOS0 and resultHandler and callable(resultHandler)):
             resultHandler(Result(None, 1))  # immediately return messageId 0 in case of qos 0
 
@@ -224,7 +224,7 @@ class MqttClient:
             timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' % (topic, qos)
             self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
                                                'handler': resultHandler, 'timeOutMsg': timeOutMsg}
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)
 
     def unsubscribe(self, topics, resultHandler=None, resultHandlerTimeout=MQTT_RESULT_HANDLER_TIMEOUT):
         if (not self._connected or self._connecting or self._waitingReconnect):
@@ -246,7 +246,7 @@ class MqttClient:
                     timeOutMsg = 'Unsubscribe to topics %s timed out.' % str(topics)
                     self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
                                                        'handler': resultHandler, 'timeOutMsg': timeOutMsg}
-                self._sendall(encodedMsg)
+                self._sendallDataToSocket(encodedMsg)
                 return messageId
         else:
             raise TypeError('Topics should be an instance of string or list.')
@@ -286,7 +286,13 @@ class MqttClient:
     def _getDataFromSocket(self):
         try:
             if self._sock is not None:
-                return self._sock.recv(MQTT_SOCKET_MAX_BYTES_READ)
+                self.lock.acquire()
+                try:
+                    # Do not put any logs in this block. Will cause thread deadlock while
+                    # logging via ServerLogHandler
+                    return self._sock.recv(MQTT_SOCKET_MAX_BYTES_READ)
+                finally:
+                    self.lock.release()
         except socket.timeout:
             pass
         except socket.error as err:
@@ -297,16 +303,24 @@ class MqttClient:
                 self.logger.error("SocketError" % (str(err)))
                 self.logger.debug("", exc_info=True)
 
+
     def _sendallDataToSocket(self, data):
         try:
             if self._sock is not None:
-                self._sock.sendall(data)
+                self.lock.acquire()
+                try:
+                    # Do not put any logs in this block. Will cause thread deadlock while
+                    # logging via ServerLogHandler
+                    self._sock.sendall(data)
+                finally:
+                    self.lock.release()
         except socket.error as err:
             if ssl and isinstance(err, (ssl.SSLWantWriteError, ssl.SSL_ERROR_WANT_READ)):
                 pass
             else:
                 self._resetSock()
                 raise socket.error(str("Socket error in send: %s. Connection reset." % (str(err))))
+
 
     def _validateTopic(self, topic):
         if (topic):
@@ -334,40 +348,29 @@ class MqttClient:
         if (resultHandler is not None and not callable(resultHandler)):
             raise ValueError('Result Handler should be a callable object.')
 
-    def _sendall(self, data):
-        self.lock.acquire()
-        try:
-            if (data):
-                self._sendallDataToSocket(data)
-        finally:
-            self.lock.release()
 
     def _receive(self):
-        self.lock.acquire()
         try:
-            try:
-                data = self._getDataFromSocket()
-                if (data is not None) and (len(data) > 0):
-                    mqttMsg = self._mqttDecoder.decode(data)
-                    self.decoderErrorCount = 0
-                    if (mqttMsg):
-                        self.logger.debug('Received message:%s' % mqttMsg.toString())
-                else:
-                    mqttMsg = None
-                return mqttMsg
-            except MqttDecoderError as msg:
-                self.decoderErrorCount = self.decoderErrorCount + 1
-                self.logger.debug("MqttDecoderError.", exc_info=True)
-                if (self.decoderErrorCount > MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET):
-                    self.logger.debug("Resetting socket as MqttDecoderError count exceeded %s" %
-                                      str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET), exc_info=True)
-                    self.decoderErrorCount = 0
-                    self._resetSock()
-            except MqttFrameError as msg:
+            data = self._getDataFromSocket()
+            if (data is not None) and (len(data) > 0):
+                mqttMsg = self._mqttDecoder.decode(data)
+                self.decoderErrorCount = 0
+                if (mqttMsg):
+                    self.logger.debug('Received message:%s' % mqttMsg.toString())
+            else:
+                mqttMsg = None
+            return mqttMsg
+        except MqttDecoderError as msg:
+            self.decoderErrorCount = self.decoderErrorCount + 1
+            self.logger.debug("MqttDecoderError.", exc_info=True)
+            if (self.decoderErrorCount > MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET):
+                self.logger.debug("Resetting socket as MqttDecoderError count exceeded %s" %
+                                  str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET), exc_info=True)
+                self.decoderErrorCount = 0
                 self._resetSock()
-                self.logger.debug("MqttFrameError. Resetting socket", exc_info=True)
-        finally:
-            self.lock.release()
+        except MqttFrameError as msg:
+            self._resetSock()
+            self.logger.debug("MqttFrameError. Resetting socket", exc_info=True)
 
     def _handleMqttMessage(self, mqttMessage):
         self._lastPingRespTime = time.time()
@@ -489,7 +492,7 @@ class MqttClient:
         variableHeader = {'messageId': mqttMessage.messageId}
         pubAckMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self._mqttEncoder.encode(pubAckMsg)
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)
 
     def _handlePubAckMsg(self, mqttMessage):
         resultHandler = self._getResultHandler(mqttMessage)
@@ -503,7 +506,7 @@ class MqttClient:
         variableHeader = {'messageId': mqttMessage.messageId}
         pubComMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self._mqttEncoder.encode(pubComMsg)
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)
         if (mqttMessage.messageId in self._msgIdInbox):
             self._msgIdInbox.remove(mqttMessage.messageId)
 
@@ -512,7 +515,7 @@ class MqttClient:
         variableHeader = {'messageId': mqttMessage.messageId}
         pubRelMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader)
         encodedMsg = self._mqttEncoder.encode(pubRelMsg)
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)
 
     def _resetSock(self):
         self._disconnecting = 1
@@ -576,4 +579,4 @@ class MqttClient:
         fixedHeader = MqttFixedHeader(PINGREQ)
         pingReqMsg = self._mqttMsgFactory.message(fixedHeader)
         encodedMsg = self._mqttEncoder.encode(pingReqMsg)
-        self._sendall(encodedMsg)
+        self._sendallDataToSocket(encodedMsg)

@@ -292,11 +292,11 @@ class InstaMsg(Thread):
             if (msgJson is not None and ('client_id' in msgJson and ('logging' in msgJson))):
                 clientId = str(msgJson['client_id'])
                 logging = msgJson['logging']
-                if (logging):
+                if (logging == "1"):
                     if (clientId not in self._logsListener):
                         self._logsListener.append(clientId)
                         self._enableLogToServer = 1;
-                        self._disableLogToServerTime = time.time() + 1800 #Disable automaticaly in 30 min
+                        self._disableServerLoggingTime = time.time() + 1800 #Disable automaticaly in 30 min
                         self.logger.addHandler(self.serverLogHandler)
                 else:
                     if (clientId in self._logsListener):
@@ -306,7 +306,7 @@ class InstaMsg(Thread):
                         self.logger.removeHandler(self.serverLogHandler)
 
     def _processLogToServerTimeout(self):
-        if self._enableLogToServer == 1 and self._disableLogToServerTime < time.time():
+        if self._enableLogToServer == 1 and self._disableServerLoggingTime < time.time():
             self._enableLogToServer = 0
             self.logger.removeHandler(self.serverLogHandler)
 
@@ -469,4 +469,4 @@ class InstaMsg(Thread):
         self.serverLogHandler = ServerLogHandler(self)
         formatter = logging.Formatter('[%(asctime)s] %(levelname)s in %(module)s:%(lineno)d: %(message)s')
         self.serverLogHandler.setFormatter(formatter)
-        self._disableLogToServerTime = time.time()
+        self._disableServerLoggingTime = time.time()

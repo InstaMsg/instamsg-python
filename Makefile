@@ -3,7 +3,7 @@
 all: setup
 
 venv/bin/activate:
-	if which virtualenv-2.7 >/dev/null; then virtualenv-2.7 -p python3.6 venv -v --no-wheel; else virtualenv -p python3.6 venv -v --no-wheel; fi
+	if which virtualenv-2.7 >/dev/null; then virtualenv-2.7 -p python3.7 venv -v --no-wheel; else virtualenv -p python3.7 venv -v --no-wheel; fi
 
 run: venv/bin/activate
 	. venv/bin/activate; python examples/instamsg-example.py
