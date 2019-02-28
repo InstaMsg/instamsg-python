@@ -6,7 +6,7 @@ import _thread
 from threading import Thread, Event
 
 try:
-    import wolfssl
+    import ssl
     HAS_SSL = True
 except:
     HAS_SSL = False  
