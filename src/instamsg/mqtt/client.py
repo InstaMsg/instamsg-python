@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import logging
 import socket
 import time
 import traceback
@@ -30,8 +31,9 @@ class MqttClient:
             raise ValueError('MqttClient:: host cannot be null.')
         if (not port):
             raise ValueError('MqttClient:: port cannot be null.')
-        if ssl is None and enableSsl==1:
+        if ssl is None and enableSsl == 1:
             raise ValueError('MqttClient:: cannot enable ssl as ssl library missing')
+        self.logger = logging.getLogger(__name__)
         self.errCount = 0
         self.lock = RLock()
         self.host = host
@@ -41,7 +43,6 @@ class MqttClient:
         self.options = self._initOptions(options)
         self.keepAliveTimer = self.options['keepAliveTimer']
         self.reconnectTimer = self.options['reconnectTimer']
-        self._logLevel = options.get('logLevel')
         self._cleanSession = 1
         self._sock = None
         self._sockInit = 0
@@ -59,7 +60,6 @@ class MqttClient:
         self._onDisconnectCallBack = None
         self._onConnectCallBack = None
         self._onMessageCallBack = None
-        self._onDebugMessageCallBack = None
         self._msgIdInbox = []
         self._resultHandlers = {}  # {handlerId:{time:122334,handler:replyHandler, timeout:10, timeOutMsg:"Timed out"}}
         self._lastConnectTime = time.time()
@@ -103,21 +103,18 @@ class MqttClient:
                             self._lastPingRespTime = None
                 self._processHandlersTimeout()
                 if (self._connecting and ((self._lastConnectTime + CONNECT_ACK_TIMEOUT) < time.time())):
-                    self._log(MQTT_LOG_LEVEL_INFO,
-                              "[MqttClientError, method = process]::Connect Ack timed out. Reseting connection.")
+                    self.logger.info("Connect Ack timed out. Resetting connection.")
                     self._resetSock()
         except socket.error as msg:
             self._resetSock()
-            self._log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][SocketError]:: %s" % (str(msg)))
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
+            self.logger.error("Socket error (%s)" % (str(msg)))
+            self.logger.debug("", exc_info=True)
         except MqttConnectError as msg:
-            self._log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = process][MqttConnectError]:: %s" % (str(msg)))
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
-        except:
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = process][MqttConnectError]:: %s" % (traceback.print_exc()))
+            self.logger.error("MqttConnectError (%s)" % (str(msg)))
+            self.logger.debug("", exc_info=True)
+        except Exception as msg:
+            self.logger.error("Unknown error (%s)" % (str(msg)))
+            self.logger.debug("", exc_info=True)
 
     def provision(self, provId, provPin, timeout=300):
         try:
@@ -154,25 +151,22 @@ class MqttClient:
             if (self._connecting is 0 and self._sockInit):
                 if (not self._connected):
                     self._connecting = 1
-                    self._log(MQTT_LOG_LEVEL_INFO,
-                              '[MqttClient]:: Mqtt Connecting to %s:%s' % (self.host, str(self.port)))
                     fixedHeader = MqttFixedHeader(CONNECT, qos=0, dup=0, retain=0)
                     connectMsg = self._mqttMsgFactory.message(fixedHeader, self.options, self.options)
                     encodedMsg = self._mqttEncoder.encode(connectMsg)
                     self._sendall(encodedMsg)
         except socket.timeout:
             self._connecting = 0
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = connect][SocketTimeoutError]:: Socket timed out sending connect")
+            self.logger.error("Socket timed out sending connect.")
+            self.logger.debug("", exc_info=True)
         except socket.error as msg:
             self._resetSock()
-            self._log(MQTT_LOG_LEVEL_ERROR, "[MqttClientError, method = connect][SocketError]:: %s" % (str(msg)))
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = connect][Exception]:: %s" % (traceback.print_exc()))
-        except:
+            self.logger.error("Socket Error -  %s" % (str(msg)))
+            self.logger.debug("", exc_info=True)
+        except Exception as e:
             self._connecting = 0
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = connect][Exception]:: %s" % (traceback.print_exc()))
+            self.logger.error("Unknown error in connect  %s" % (str(e)))
+            self.logger.debug("", exc_info=True)
 
     def disconnect(self):
         try:
@@ -183,9 +177,9 @@ class MqttClient:
                     disConnectMsg = self._mqttMsgFactory.message(fixedHeader)
                     encodedMsg = self._mqttEncoder.encode(disConnectMsg)
                     self._sendall(encodedMsg)
-            except Exception as msg:
-                self._log(MQTT_LOG_LEVEL_DEBUG,
-                          "[MqttClientError, method = disconnect][Exception]:: %s" % (traceback.print_exc()))
+            except Exception as e:
+                self.logger.error("Unknown error in socket connect  %s" % (str(e)))
+                self.logger.debug("", exc_info=True)
         finally:
             self._resetSock()
 
@@ -204,7 +198,7 @@ class MqttClient:
         publishMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader, payload)
         encodedMsg = self._mqttEncoder.encode(publishMsg)
         if (logging):
-            self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: sending message:%s' % publishMsg.toString())
+            self.logger.debug('Publishing message: %s' % publishMsg.toString())
         if (qos > MQTT_QOS0 and messageId and resultHandler):
             timeOutMsg = 'Publishing message %s to topic %s with qos %d timed out.' % (payload, topic, qos)
             self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
@@ -225,7 +219,7 @@ class MqttClient:
         variableHeader = {'messageId': messageId}
         subMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader, {'topic': topic, 'qos': qos})
         encodedMsg = self._mqttEncoder.encode(subMsg)
-        self._log(MQTT_LOG_LEVEL_DEBUG, '[MqttClient]:: sending subscribe message: %s' % subMsg.toString())
+        self.logger.debug('Sending subscribe message: %s' % subMsg.toString())
         if (resultHandler):
             timeOutMsg = 'Subscribe to topic %s with qos %d timed out.' % (topic, qos)
             self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
@@ -247,7 +241,7 @@ class MqttClient:
                 self._validateTopic(topic)
                 unsubMsg = self._mqttMsgFactory.message(fixedHeader, variableHeader, topics)
                 encodedMsg = self._mqttEncoder.encode(unsubMsg)
-                self._log(MQTT_LOG_LEVEL_DEBUG, '[MqttClient]:: sending unsubscribe message: %s' % unsubMsg.toString())
+                self.logger.debug('Sending unsubscribe message: %s' % unsubMsg.toString())
                 if (resultHandler):
                     timeOutMsg = 'Unsubscribe to topics %s timed out.' % str(topics)
                     self._resultHandlers[messageId] = {'time': time.time(), 'timeout': resultHandlerTimeout,
@@ -272,12 +266,6 @@ class MqttClient:
         else:
             raise ValueError('Callback should be a callable object.')
 
-    def onDebugMessage(self, callback):
-        if (callable(callback)):
-            self._onDebugMessageCallBack = callback
-        else:
-            raise ValueError('Callback should be a callable object.')
-
     def onMessage(self, callback):
         if (callable(callback)):
             self._onMessageCallBack = callback
@@ -285,7 +273,7 @@ class MqttClient:
             raise ValueError('Callback should be a callable object.')
 
     def _setSocketNConnect(self):
-        self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Opening socket to %s:%s' % (self.host, str(self.port)))
+        self.logger.info('Connecting to %s:%s' % (self.host, str(self.port)))
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
         self._sock.settimeout(MQTT_SOCKET_TIMEOUT)
         if self.enableSsl and ssl:
@@ -293,7 +281,7 @@ class MqttClient:
                                          cert_reqs=ssl.CERT_NONE,
                                          ssl_version=ssl.PROTOCOL_SSLv23)
         self._sock.connect((self.host, self.port))
-        self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Socket opened to %s:%s' % (self.host, str(self.port)))
+        self.logger.debug('Socket opened to %s:%s' % (self.host, str(self.port)))
 
     def _getDataFromSocket(self):
         try:
@@ -306,7 +294,8 @@ class MqttClient:
                 pass
             else:
                 self._resetSock()
-                self._log(MQTT_LOG_LEVEL_DEBUG, "[MqttClientError, method = _receive][SocketError]:: %s" % (str(err)))
+                self.logger.error("SocketError" % (str(err)))
+                self.logger.debug("", exc_info=True)
 
     def _sendallDataToSocket(self, data):
         try:
@@ -345,11 +334,6 @@ class MqttClient:
         if (resultHandler is not None and not callable(resultHandler)):
             raise ValueError('Result Handler should be a callable object.')
 
-    def _log(self, level, msg):
-        if (level <= self._logLevel):
-            if (self._onDebugMessageCallBack):
-                self._onDebugMessageCallBack(level, msg)
-
     def _sendall(self, data):
         self.lock.acquire()
         try:
@@ -367,24 +351,21 @@ class MqttClient:
                     mqttMsg = self._mqttDecoder.decode(data)
                     self.decoderErrorCount = 0
                     if (mqttMsg):
-                        self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Received message:%s' % mqttMsg.toString())
+                        self.logger.debug('Received message:%s' % mqttMsg.toString())
                 else:
                     mqttMsg = None
                 return mqttMsg
             except MqttDecoderError as msg:
                 self.decoderErrorCount = self.decoderErrorCount + 1
-                self._log(MQTT_LOG_LEVEL_DEBUG,
-                          "[MqttClientError, method = _receive][MqttDecoderError]:: %s" % (traceback.print_exc()))
+                self.logger.debug("MqttDecoderError.", exc_info=True)
                 if (self.decoderErrorCount > MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET):
-                    self._log(MQTT_LOG_LEVEL_DEBUG,
-                              "[MqttClientError, method = _receive]:: Resetting socket as MqttDecoderError count exceeded %s" % (
-                                  str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET)))
+                    self.logger.debug("Resetting socket as MqttDecoderError count exceeded %s" %
+                                      str(MQTT_DECODER_ERROR_COUNT_FOR_SOCKET_RESET), exc_info=True)
                     self.decoderErrorCount = 0
                     self._resetSock()
             except MqttFrameError as msg:
                 self._resetSock()
-                self._log(MQTT_LOG_LEVEL_DEBUG,
-                          "[MqttClientError, method = _receive][MqttFrameError]:: %s" % (traceback.print_exc()))
+                self.logger.debug("MqttFrameError. Resetting socket", exc_info=True)
         finally:
             self.lock.release()
 
@@ -445,7 +426,7 @@ class MqttClient:
         if (connectReturnCode == CONNECTION_ACCEPTED):
             self._connected = 1
             self._lastConnectTime = time.time()
-            self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Connected to %s:%s' % (self.host, str(self.port)))
+            self.logger.info('Connected successfully to %s:%s' % (self.host, str(self.port)))
             if (self._onConnectCallBack): self._onConnectCallBack(self)
         else:
             self._handleProvisionAndConnectAckCode("Connection", connectReturnCode)
@@ -486,7 +467,7 @@ class MqttClient:
             msg = '[MqttClient]:: %s refused client identifier rejected.' % type
         elif (code == CONNECTION_REFUSED_SERVER_UNAVAILABLE):
             msg = '[MqttClient]:: %s refused server unavailable. Waiting ...' % type
-            self._log(MQTT_LOG_LEVEL_DEBUG, msg)
+            self.logger.debug(msg)
             return  # Not an error just wait for server
         elif (code == CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD):
             msg = '[MqttClient]:: %s refused bad username or password.' % type
@@ -535,7 +516,7 @@ class MqttClient:
 
     def _resetSock(self):
         self._disconnecting = 1
-        self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Resetting connection due to socket error or connect timeout...')
+        self.logger.info('Resetting connection due to socket error or connect timeout...')
         self._closeSocket()
 
     def _initSock(self):
@@ -545,9 +526,8 @@ class MqttClient:
         if (self._sockInit is 0 and waitFor > 0):
             if (not self._waitingReconnect):
                 self._waitingReconnect = 1
-                self._log(MQTT_LOG_LEVEL_DEBUG,
-                          '[MqttClient]:: Last connection failed. Waiting  for %d seconds before retry...' % int(
-                              waitFor))
+                self.logger.info('Last connection failed. Waiting  for %d seconds before retry...' % int(
+                    waitFor))
             return
         if (self._sockInit is 0 and waitFor <= 0):
             self._nextConnTry = t + self.reconnectTimer
@@ -557,23 +537,15 @@ class MqttClient:
             self._sockInit = 1
             self._waitingReconnect = 0
 
-            # def _getCommonNameFromCertificate(self):
-
-    #     certDer = self._sock.getpeercert(binary_form=True)
-    #     if(certDer is not None):
-    #         x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certDer)
-    #         return x509.get_subject().commonName
-    #     return None
-
     def _closeSocket(self):
         try:
-            self._log(MQTT_LOG_LEVEL_INFO, '[MqttClient]:: Closing socket...')
+            self.logger.info('Closing socket...')
             if (self._sock):
                 self._sock.close()
                 self._sock = None
-        except:
-            self._log(MQTT_LOG_LEVEL_DEBUG,
-                      "[MqttClientError, method = _closeSocket][Exception]:: %s" % (traceback.print_exc()))
+        except Exception as e:
+            self.logger.error("Error closing socket (%s)." % (str(e)))
+            self.logger.debug("", exc_info=True)
         finally:
             self._sockInit = 0
             self._connected = 0

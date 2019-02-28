@@ -18,9 +18,14 @@ class MqttMsg:
         self.fixedHeader = fixedHeader
         self.variableHeader = variableHeader
         self.payload = payload
-        
+
     def toString(self):
-        return '%s[[%s] [variableHeader= %s] [payload= %s]]' % (self.__class__.__name__, self.fixedHeader.toString(), str(self.variableHeader), str(self.payload))
+        p = str(self.payload)
+        if len(p) > 100:
+            payloadShort = "%s...%s(%i bytes)" % (p[0:48], p[-48:], len(p))
+        else:
+            payloadShort = p
+        return '%s[[%s] [variableHeader= %s] [payload= %s]]' % (self.__class__.__name__, self.fixedHeader.toString(), str(self.variableHeader), payloadShort)
         
 
 class MqttConnectMsg(MqttMsg):

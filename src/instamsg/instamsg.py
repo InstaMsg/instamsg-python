@@ -3,6 +3,7 @@ import time
 import json
 import hashlib
 import _thread
+import logging
 from threading import Thread, Event
 
 try:
@@ -19,6 +20,7 @@ from .mqtt.constants import PROVISIONING_CLIENT_ID
 from .message import Message
 from .errors import *
 from .constants import *
+from .log_handler import ServerLogHandler
 
 ####InstaMsg ###############################################################################
 
@@ -36,6 +38,7 @@ class InstaMsg(Thread):
         self.name = 'InstaMsg Thread'
         self.alive = Event()
         self.alive.set()
+        self.__initLogger()
         self._clientId = clientId
         self._authKey = authKey 
         self._onConnectCallBack = connectHandler   
@@ -63,7 +66,6 @@ class InstaMsg(Thread):
             self._mqttClient = MqttClientWebSocket(INSTAMSG_HOST, self._port, clientIdAndUsername[0], enableSsl=self._enableSsl, options=mqttoptions)
         self._mqttClient.onConnect(self._onConnect)
         self._mqttClient.onDisconnect(self._onDisConnect)
-        self._mqttClient.onDebugMessage(self._handleDebugMessage)
         self._mqttClient.onMessage(self._handleMessage)
         self._connected = 0    
         self._mqttClient.connect()
@@ -134,8 +136,8 @@ class InstaMsg(Thread):
                         self._mqttClient.process()
                         self._processHandlersTimeout()
                 except Exception as e:
-                    self._handleDebugMessage(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsgClientError, method = run]- %s" % (str(e)))
-                    self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))                 
+                    self.logger.error("Error starting InstaMsg (%s) Retrying..." % (str(e)))
+                    self.logger.debug("Error starting InstaMsg" , exc_info=True)
         finally:
             self.close()
                 
@@ -159,7 +161,7 @@ class InstaMsg(Thread):
             try:
                 self._mqttClient.publish(topic, msg, qos, dup, resultHandler, timeout, logging=logging)
             except Exception as e:
-                self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
+                self.logger.debug("Error while publishing message.", exc_info=True)
                 raise InstaMsgPubError(str(e))
         else: raise ValueError("Topic cannot be null or empty string.")
     
@@ -176,7 +178,7 @@ class InstaMsg(Thread):
                 if(callable(resultHandler)): resultHandler(result)
             self._mqttClient.subscribe(topic, qos, _resultHandler, timeout)
         except Exception as e:
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
+            self.logger.debug("Error while subscribing to topic.", exc_info=True)
             raise InstaMsgSubError(str(e))
             
 
@@ -190,7 +192,7 @@ class InstaMsg(Thread):
                 if(callable(resultHandler)):resultHandler(result)
             self._mqttClient.unsubscribe(topics, _resultHandler, timeout)
         except Exception as e:
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
+            self.logger.debug("Error while unsubscribing from topic.", exc_info=True)
             raise InstaMsgUnSubError(str(e))
 
     
@@ -200,34 +202,26 @@ class InstaMsg(Thread):
             msg = Message(messageId, clienId, msg, qos, dup, replyTopic=self._clientId, instaMsg=self)._sendMsgJsonString()
             self._send(messageId, clienId, msg, qos, dup, replyHandler, timeout)
         except Exception as e:
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
+            self.logger.debug("Error while sending message.", exc_info=True)
             raise InstaMsgSendError(str(e))
         
-    def log(self, level, message):
-        if(self._enableLogToServer and self._mqttClient.connected()):
-            self.publish(self._serverLogsTopic, message, 1, 0, logging=0)
-        else:
-            timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
-            print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))
-   
+    def enableLogToServer(self):
+        return self._enableLogToServer
+
+    def connected(self):
+        return self._mqttClient.connected()
+
     @classmethod        
     def provision(cls, provId, provPin, provisionHandler, enableSsl=1, timeout = 60):
         if(not callable(provisionHandler)): raise ValueError('provisionHandler should be a callable object.')
         try:
-            def _log(level, message):
-                timeString = time.strftime("%d/%m/%Y, %H:%M:%S:%z")
-                print ("[%s] - [%s] - [%s]%s" % (_thread.get_ident(), timeString, INSTAMSG_LOG_LEVEL[level], message))               
-            _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Sending provisioning message...")      
             mqttClient = MqttClient(INSTAMSG_HOST, INSTAMSG_PORT_SSL, PROVISIONING_CLIENT_ID, enableSsl = enableSsl )
-            mqttClient.onDebugMessage(_log)
             provResponse = mqttClient.provision(provId, provPin, timeout)
             if(provResponse):
                 if(callable(provisionHandler)): provisionHandler (provResponse)
-                _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning completed.")
             else:
-                _log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Provisioning failed.")
+                raise InstaMsgProvisionError("Provisioning failed.")
         except Exception as e:
-            _log(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))  
             raise InstaMsgProvisionError(str(e))
 
 
@@ -238,13 +232,12 @@ class InstaMsg(Thread):
             def _resultHandler(result):
                 if(result.failed()):
                     if(callable(resultHandler)):resultHandler(Result(config,0,result.cause()))  
-                    self.log(INSTAMSG_LOG_LEVEL_ERROR, "[InstaMsg]::Error publishing Config to server: %s" %str(result.cause()))  
                 else:
                     if(callable(resultHandler)):resultHandler(Result(config,1))
-                    self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Config published to server: %s" %str(config))  
             self.publish(self._configClientToServerTopic, message, qos=INSTAMSG_QOS1, dup=0, resultHandler=_resultHandler)
         except Exception as e:
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))   
+            self.logger.error("Error while publishing config - %s" % str(e))
+            self.logger.debug("", exc_info=True)
 
     def publishNetworkInfo(self, networkInfo):
         networkInfo["instamsg_version"] = INSTAMSG_VERSION
@@ -269,7 +262,6 @@ class InstaMsg(Thread):
         except Exception as e:
             if(messageId in self._sendMsgReplyHandlers):
                 del self._sendMsgReplyHandlers[messageId]
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))
             raise Exception(str(e))
 
 
@@ -296,7 +288,6 @@ class InstaMsg(Thread):
                         self._enableLogToServer = 0;
     
     def _onConnect(self, mqttClient):
-        self._handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client connected to InstaMsg IOT cloud service.")
         self._connected = 1
         self._sendClientMetadata()
         self.subscribe(self._enableServerLoggingTopic, INSTAMSG_QOS0, self._enableServerLogging)
@@ -305,8 +296,7 @@ class InstaMsg(Thread):
         
 
     def _onDisConnect(self):
-        self._handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Client disconnected from InstaMsg IOT cloud service.")
-        if(self._onDisConnectCallBack): self._onDisConnectCallBack()  
+        if(self._onDisConnectCallBack): self._onDisConnectCallBack()
         
     def _handleDebugMessage(self, level, msg):
         if(level <= self._logLevel):
@@ -326,9 +316,9 @@ class InstaMsg(Thread):
                 self._handlePubSubMessage(mqttMsg)
 
         except Exception as e:
-            self._handleDebugMessage(INSTAMSG_LOG_LEVEL_DEBUG, "[InstaMsgClientError]- %s" % (traceback.print_exc()))                
-                 
-            
+            self.logger.error("Error while handling message received. - %s" % str(e))
+            self.logger.debug("", exc_info=True)
+
     def _handlePubSubMessage(self, mqttMsg):     
         msgHandler = self._msgHandlers.get(mqttMsg.topic)
         if(msgHandler and callable(msgHandler)):
@@ -372,7 +362,7 @@ class InstaMsg(Thread):
                     msgHandler = self._sendMsgReplyHandlers.get(responseId).get('handler')
                 else:
                     msgHandler = None
-                    self._handleDebugMessage(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: No handler for message [messageId=%s responseId=%s]" % (str(messageId), str(responseId)))
+                    self.logger.error("No handler for message [messageId=%s responseId=%s]" % (str(messageId), str(responseId)))
                 if(msgHandler):
                     if(callable(msgHandler)): msgHandler(result)
                     del self._sendMsgReplyHandlers[responseId]
@@ -436,8 +426,9 @@ class InstaMsg(Thread):
         try:
             message = json.dumps(self._metadata)
             self.publish(self._infoTopic, message, INSTAMSG_QOS0, 0)
-        except:
-            self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Error publishing client metadata. Continuing...")
+        except Exception as e:
+            self.logger.error("Error publishing client metadata (%s). Continuing..." % str(e))
+            self.logger.debug("", exc_info=True)
     
     def _handleConfigMessage(self, mqttMsg):
         msgJson = self._parseJson(mqttMsg.payload)
@@ -445,6 +436,13 @@ class InstaMsg(Thread):
             self._configHandler(Result((msgJson),1))
 
     def _handleSystemRebootMessage(self):
-        self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]::Rebooting device.")
         if(callable(self._rebootHandler)):
-            self._rebootHandler() 
+            self._rebootHandler()
+
+    def __initLogger(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        sh = ServerLogHandler(self)
+        h = logging.StreamHandler()
+        self.logger.addHandler(h)
+        self.logger.addHandler(sh)

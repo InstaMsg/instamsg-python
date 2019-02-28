@@ -6,6 +6,11 @@ import random
 import subprocess
 import argparse
 import re
+import socket
+import logging.config
+import logging
+import struct
+import fcntl
 
 
 #add parent directory to path so that modules can be imported when example 
@@ -22,6 +27,27 @@ from src.instamsg import instamsg
 clientId = ''
 authKey = ''
 INSTAMSG_CONNECTED = False
+logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'default': {
+                'format': '[%(asctime)s] %(levelname)s in %(module)s:%(lineno)d: %(message)s',
+            }
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',
+                'formatter': 'default'
+            }
+        },
+        'root': {
+            'level': 'DEBUG',
+            'handlers': ['console']
+        }
+    })
+LOGGER = logging.getLogger(__name__)
 
 def start(args): 
     try:      
@@ -47,12 +73,12 @@ def start(args):
                         networkInfo = _getNetworkInfo("wlan0")
                         if(networkInfo): instaMsg.publishNetworkInfo(networkInfo)
                     except Exception as e:
-                        print("Error while publishing periodic network info: %s" % str(e))
+                        LOGGER.error("Error while publishing periodic network info: %s" % str(e))
                     finally:
                         publishNetworkInfoTimer = publishNetworkInfoTimer + networkInfoPublishInterval
                 time.sleep(10) #
     except:
-       print("Unknown Error in start: %s %s" % (str(sys.exc_info()[0]), str(sys.exc_info()[1]))) 
+       LOGGER.error("Unknown Error in start.", exc_info=True)
     finally:
         instaMsg = None
 
@@ -60,8 +86,8 @@ def start(args):
 def _startInstaMsg(provId='', provkey=''):
     options = {
                 'logLevel':instamsg.INSTAMSG_LOG_LEVEL_INFO, 
-                'enableTcp':0, # 1 TCP 0 WebSocket
-                'enableSsl':1,
+                'enableTcp':1, # 1 TCP 0 WebSocket
+                'enableSsl':0,
                 'configHandler': _configHandler,
                 'rebootHandler': _rebootHandler,
                 'metadata': _getDeviceMetadata()
@@ -80,14 +106,14 @@ def _startInstaMsg(provId='', provkey=''):
         instaMsg.start()  
         return instaMsg       
     except (IOError, FileNotFoundError):
-        print("File auth.json not found or path is incorrect. Trying provisioning...")
+        LOGGER.error("File auth.json not found or path is incorrect. Trying provisioning...")
         instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler, enableSsl=options['enableSsl'])
     finally:
         return instaMsg
 
 def _getAuthJson():
     auth = None
-    print("Trying to read auth info from auth.json ...")
+    LOGGER.debug("Trying to read auth info from auth.json ...")
     currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
     filename =  os.path.join(currentdir, 'auth.json')
     with open(filename,"r") as f:
@@ -104,7 +130,7 @@ def _provisionHandler(provMsg):
     3. If you loose these credentials you will have to login into your InstamSg
        account and reprovision the client with new provisioning pin.
     """
-    print(" Received provisioning response %s . Saving to file auth.json" % provMsg) 
+    LOGGER.debug(" Received provisioning response %s . Saving to file auth.json" % provMsg)
     try:
         currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
         filename =  os.path.join(currentdir, 'auth.json')
@@ -113,7 +139,7 @@ def _provisionHandler(provMsg):
         f.close()
         return _startInstaMsg()
     except IOError:
-        print("File not found or path is incorrect")
+        LOGGER.error("File not found or path is incorrect")
 
 
 def _onConnect(instaMsg):
@@ -138,7 +164,7 @@ def _onConnect(instaMsg):
 
         """
 
-        print("Sending loopbak messages to self...")
+        LOGGER.debug("Sending loopbak messages to self...")
         auth = _getAuthJson()
         clientId = auth['client_id']
         authKey = auth['auth_token']
@@ -148,7 +174,7 @@ def _onConnect(instaMsg):
         time.sleep(1)
         _publishMessage(instaMsg, clientId, "Test message 6",0, 0)
     except IOError:
-        print("File auth.json not found or path is incorrect. Unable to send loopbak messages to self...")
+        LOGGER.error("File auth.json not found or path is incorrect. Unable to send loopbak messages to self...")
     time.sleep(10)
     _unsubscribe(instaMsg, topic)
     config={
@@ -160,40 +186,39 @@ def _onConnect(instaMsg):
 def _onDisConnect():
     global INSTAMSG_CONNECTED
     INSTAMSG_CONNECTED = False
-    print ("Client disconnected.")
+    LOGGER.debug ("Client disconnected.")
     
 def _subscribe(instaMsg, topic, qos):  
     try:
         def _resultHandler(result):
-            print ("Subscribed to topic %s with qos %d" % (topic, qos))
+            LOGGER.debug ("Subscribed to topic %s with qos %d" % (topic, qos))
         instaMsg.subscribe(topic, qos, _messageHandler, _resultHandler)
     except Exception as e:
-        print (str(e))
+        LOGGER.error (str(e))
     
 def _publishMessage(instaMsg, topic, msg, qos, dup):
     try:
         def _resultHandler(result):
-            print (result)
-            print ("Published message %s to topic %s with qos %d" % (msg, topic, qos))
+            LOGGER.debug ("Published message %s to topic %s with qos %d" % (msg, topic, qos))
         instaMsg.publish(topic, msg, qos, dup, resultHandler=_resultHandler)
     except Exception as e:
-        print (str(e))
+        LOGGER.error (str(e))
     
 def _unsubscribe(instaMsg, topic):
     try:
         def _resultHandler(result):
-            print ("UnSubscribed from topic %s" % topic)
+            LOGGER.debug("UnSubscribed from topic %s" % topic)
         instaMsg.unsubscribe(topic, _resultHandler)
     except Exception as e:
-        print (str(e))
+        LOGGER.error(str(e))
         
 def _messageHandler(mqttMessage):
         if(mqttMessage):
-            print ("Received message %s" % str(mqttMessage.toString()))
+            LOGGER.debug("Received message %s" % str(mqttMessage.toString()))
         
 def _oneToOneMessageHandler(msg):
     if(msg):
-        print ("One to One Message received %s" % msg.toString())
+        LOGGER.debug("One to One Message received %s" % msg.toString())
         msg.reply("This is a reply to a one to one message.")
         
 def _sendMessage(instaMsg, clientId):
@@ -205,31 +230,31 @@ def _sendMessage(instaMsg, clientId):
             if(result.succeeded()):
                 replyMessage = result.result()
                 if(replyMessage):
-                    print ("Message received %s" % replyMessage.toString())
+                    LOGGER.debug("Message received %s" % replyMessage.toString())
                     replyMessage.reply("This is a reply to a reply.")
             else:
-                print ("Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1]))
+                LOGGER.debug("Unable to send message errorCode= %d errorMsg=%s" % (result.code[0], result.code[1]))
         instaMsg.send(clientId, msg, qos, dup, _replyHandler, 120)    
     except Exception as e:
-        print (str(e))
+        LOGGER.error(str(e))
 
 def _publishConfig(instaMsg, config):
     try:
         def _resultHandler(result):
-            print ("Published config %s" % json.dumps(config))
+            LOGGER.debug("Published config %s" % json.dumps(config))
     except Exception as e:
-        print (str(e))
+        LOGGER.error(str(e))
     instaMsg.publishConfig(config, _resultHandler)
 
 
 def _configHandler(result):
     if(result.succeeded()):
         configJson = result.result()
-        print("Received config from server: %s" % json.dumps(configJson))
+        LOGGER.debug("Received config from server: %s" % json.dumps(configJson))
 
 
 def _rebootHandler():
-    print("Received rebbot signal from server.")
+    LOGGER.debug("Received rebbot signal from server.")
 
 
 def _getDeviceMetadata():
@@ -306,7 +331,7 @@ def _getNetworkInfo(interfaceName):
                         'iccid':''
                         }
             elif 'Not-Associated' in line:
-                print("No signal information.")
+                LOGGER.debug("No signal information.")
             # No information mock for testing
             if(not result):
                 result = {
@@ -319,7 +344,7 @@ def _getNetworkInfo(interfaceName):
                         'iccid':''
                         } 
     except Exception as msg:
-        print("Error getting network interface info- %s" % (traceback.print_exc()))
+        LOGGER.error("Error getting network interface info", exc_info=True)
     finally:
         return result;
 
