@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-__version__ = "1.0.0"
+from . import __version__
 
 # Logging Levels
 INSTAMSG_LOG_LEVEL_DISABLED = 0
@@ -40,5 +40,4 @@ INSTAMSG_HTTPS_PORT = 443
 INSTAMSG_API_VERSION = "1.0"
 INSTAMSG_RESULT_HANDLER_TIMEOUT = 10    
 INSTAMSG_MSG_REPLY_HANDLER_TIMEOUT = 10
-# InstaMsg Versions // Update every time when some changes happened in this file.
 INSTAMSG_VERSION = __version__

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import versioneer
 
 if sys.version_info < (3, 0):
     print('\nInstaMsg requires at least Python 3.0!')
@@ -8,6 +9,8 @@ if sys.version_info < (3, 0):
 
 from setuptools import setup, find_packages
 
+__version__ = versioneer.get_version()
+cmdclass = versioneer.get_cmdclass()
 
 with open('README.md') as f:
     readme = f.read()
@@ -17,7 +20,7 @@ with open('LICENSE') as f:
 
 setup( 
     name='InstaMsg',
-    version='1.0.0',
+    version=__version__,
     description='InstaMsg python library for IoT devices.',
     long_description=readme,
     long_description_content_type='text/markdown',
@@ -36,4 +39,5 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
     ],
+    cmdclass=cmdclass,
 )
