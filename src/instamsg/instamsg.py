@@ -1,4 +1,9 @@
 # -*- coding: utf-8 -*-
+from ._version import get_versions
+
+__version__ = get_versions()['version']
+del get_versions
+
 import hashlib
 import json
 import logging
@@ -108,7 +113,7 @@ class InstaMsg(Thread):
             self._logLevel = options.get('logLevel')
             if (self._logLevel < INSTAMSG_LOG_LEVEL_DISABLED or self._logLevel > INSTAMSG_LOG_LEVEL_DEBUG):
                 raise ValueError("logLevel option should be in between %d and %d" % (
-                INSTAMSG_LOG_LEVEL_DISABLED, INSTAMSG_LOG_LEVEL_DEBUG))
+                    INSTAMSG_LOG_LEVEL_DISABLED, INSTAMSG_LOG_LEVEL_DEBUG))
         else:
             self._logLevel = INSTAMSG_LOG_LEVEL_DISABLED
         if ('keepAliveTimer' in options):
@@ -296,7 +301,7 @@ class InstaMsg(Thread):
                     if (clientId not in self._logsListener):
                         self._logsListener.append(clientId)
                         self._enableLogToServer = 1;
-                        self._disableServerLoggingTime = time.time() + 1800 #Disable automaticaly in 30 min
+                        self._disableServerLoggingTime = time.time() + 1800  # Disable automaticaly in 30 min
                         self.logger.addHandler(self.serverLogHandler)
                 else:
                     if (clientId in self._logsListener):
