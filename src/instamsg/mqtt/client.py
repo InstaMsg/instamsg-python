@@ -470,8 +470,8 @@ class MqttClient:
             msg = (2, '[MqttClient]:: %s refused client identifier rejected.' % type)
         elif (code == CONNECTION_REFUSED_SERVER_UNAVAILABLE):
             msg = (3, '[MqttClient]:: %s refused server unavailable. Waiting ...' % type)
-            self.logger.debug(msg)
-            return  # Not an error just wait for server
+            # self.logger.debug(msg)
+            # return  # Not an error just wait for server
         elif (code == CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD):
             msg = (4, '[MqttClient]:: %s refused bad username or password.' % type)
         elif (code == CONNECTION_REFUSED_NOT_AUTHORIZED):
