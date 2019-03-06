@@ -21,6 +21,7 @@ from .mqtt.client import MqttClient
 from .mqtt.client_ws import MqttClientWebSocket
 from .mqtt.result import Result
 from .mqtt.constants import PROVISIONING_CLIENT_ID
+from .mqtt.errors import MqttTimeoutError
 from .message import Message
 from .errors import *
 from .constants import *
@@ -124,21 +125,11 @@ class InstaMsg(Thread):
             self._metadata = options['metadata']
         self._metadata["instamsg_version"] = INSTAMSG_VERSION
         self._metadata["instamsg_api_version"] = INSTAMSG_API_VERSION
-        if ('enableSsl' in options and options.get('enableSsl')):
-            if (HAS_SSL):
-                self._enableSsl = 1
-                if (self._enableTcp):
-                    self._port = INSTAMSG_PORT_SSL
-                else:
-                    self._port = INSTAMSG_PORT_WS_SSL
-            else:
-                raise ImportError("SSL not supported, Please check python version and try again.")
+        if 'enableSsl' in options and options.get('enableSsl') and HAS_SSL:
+            self._enableSsl = 1
         else:
             self._enableSsl = 0
-            if (self._enableTcp):
-                self._port = INSTAMSG_PORT
-            else:
-                self._port = INSTAMSG_PORT_WS
+        self._port = self._getPort(self._enableTcp, self._enableSsl)
 
     def run(self):
         try:
@@ -230,15 +221,26 @@ class InstaMsg(Thread):
         return self._mqttClient.connected()
 
     @classmethod
-    def provision(cls, provId, provPin, provisionHandler, enableSsl=1, timeout=60):
-        if (not callable(provisionHandler)): raise ValueError('provisionHandler should be a callable object.')
+    def provision(cls, provId, provPin, enableTcp=1, enableSsl=1, timeout=60):
         try:
-            mqttClient = MqttClient(INSTAMSG_HOST, INSTAMSG_PORT_SSL, PROVISIONING_CLIENT_ID, enableSsl=enableSsl)
+            port = cls._getPort(enableTcp, enableSsl)
+            if enableTcp:
+                mqttClient = MqttClient(INSTAMSG_HOST,
+                                        port,
+                                        PROVISIONING_CLIENT_ID,
+                                        enableSsl=enableSsl)
+            else:
+                mqttClient = MqttClientWebSocket(INSTAMSG_HOST,
+                                                 port,
+                                                 PROVISIONING_CLIENT_ID,
+                                                 enableSsl=enableSsl)
             provResponse = mqttClient.provision(provId, provPin, timeout)
-            if (provResponse):
-                if (callable(provisionHandler)): provisionHandler(provResponse)
+            if provResponse:
+                return provResponse
             else:
                 raise InstaMsgProvisionError("Provisioning failed.")
+        except MqttTimeoutError as e:
+            raise InstaMsgProvisionTimeout(str(e))
         except Exception as e:
             raise InstaMsgProvisionError(str(e))
 
@@ -468,6 +470,22 @@ class InstaMsg(Thread):
     def _handleSystemRebootMessage(self):
         if (callable(self._rebootHandler)):
             self._rebootHandler()
+
+    @classmethod
+    def _getPort(cls, enableTcp, enableSsl):
+        if enableSsl:
+            if HAS_SSL:
+                if enableTcp == 1:
+                    return INSTAMSG_PORT_SSL
+                else:
+                    return INSTAMSG_PORT_WS_SSL
+            else:
+                raise ImportError("SSL not supported, Please check python version and try again.")
+        else:
+            if enableTcp == 1:
+                return INSTAMSG_PORT
+            else:
+                return INSTAMSG_PORT_WS
 
     def __initLogger(self):
         self.logger = logging.getLogger("InstaMsg")

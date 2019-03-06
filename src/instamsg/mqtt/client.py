@@ -140,8 +140,8 @@ class MqttClient:
                     mqttMsg = self._receive()
                     if (mqttMsg and mqttMsg.fixedHeader.messageType == PROVACK):
                         auth = self._getAuthInfoFromProvAckMsg(mqttMsg)
-                        break
-                return auth
+                        return auth
+                raise(MqttTimeoutError("Provisioning timed out."))
         finally:
             self._closeSocket()
 

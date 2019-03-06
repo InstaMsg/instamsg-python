@@ -110,7 +110,8 @@ def _startInstaMsg(provId='', provkey=''):
         return instaMsg       
     except (IOError, FileNotFoundError):
         LOGGER.error("File auth.json not found or path is incorrect. Trying provisioning...")
-        instaMsg =  instamsg.InstaMsg.provision(provId, provkey, _provisionHandler, enableSsl=options['enableSsl'])
+        provAck = instamsg.InstaMsg.provision(provId, provkey, enableTcp=options['enableTcp'], enableSsl=options['enableSsl'])
+        _provisionHandler(provAck)
     finally:
         return instaMsg
 
@@ -125,7 +126,7 @@ def _getAuthJson():
     return auth   
 
 
-def _provisionHandler(provMsg):
+def _provisionHandler(provAck):
     """
     1. On succesfull provisioning a file auth.json would be created in 
        current working directory.
@@ -133,12 +134,12 @@ def _provisionHandler(provMsg):
     3. If you loose these credentials you will have to login into your InstamSg
        account and reprovision the client with new provisioning pin.
     """
-    LOGGER.debug(" Received provisioning response %s . Saving to file auth.json" % provMsg)
+    LOGGER.debug(" Received provisioning response %s . Saving to file auth.json" % provAck)
     try:
         currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))) 
         filename =  os.path.join(currentdir, 'auth.json')
         with open(filename,"w+") as f:
-            json.dump(provMsg ,f)
+            json.dump(provAck, f)
         f.close()
         return _startInstaMsg()
     except IOError:
