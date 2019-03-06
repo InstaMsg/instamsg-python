@@ -21,7 +21,7 @@ from .mqtt.client import MqttClient
 from .mqtt.client_ws import MqttClientWebSocket
 from .mqtt.result import Result
 from .mqtt.constants import PROVISIONING_CLIENT_ID
-from .mqtt.errors import MqttTimeoutError
+from .mqtt.errors import MqttTimeoutError, MqttConnectError
 from .message import Message
 from .errors import *
 from .constants import *
@@ -234,13 +234,11 @@ class InstaMsg(Thread):
                                                  port,
                                                  PROVISIONING_CLIENT_ID,
                                                  enableSsl=enableSsl)
-            provResponse = mqttClient.provision(provId, provPin, timeout)
-            if provResponse:
-                return provResponse
-            else:
-                raise InstaMsgProvisionError("Provisioning failed.")
+            return mqttClient.provision(provId, provPin, timeout)
         except MqttTimeoutError as e:
             raise InstaMsgProvisionTimeout(str(e))
+        except MqttConnectError as e:
+            raise InstaMsgProvisionError(e.value)
         except Exception as e:
             raise InstaMsgProvisionError(str(e))
 

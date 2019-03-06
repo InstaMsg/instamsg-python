@@ -438,16 +438,16 @@ class MqttClient:
         provisionReturnCode = mqttMessage.provisionReturnCode
         payload = mqttMessage.payload
         provisioningData = {}
-        if (not (payload and provisionReturnCode in [PROVISIONING_SUCCESSFUL, PROVISIONING_SUCCESSFUL_WITH_CERT])):
-            return provisioningData
-        if (provisionReturnCode == PROVISIONING_SUCCESSFUL):
+        if not payload and provisionReturnCode in [PROVISIONING_SUCCESSFUL, PROVISIONING_SUCCESSFUL_WITH_CERT]:
+            raise MqttConnectError((0, "Empty payload received from server."))
+        if provisionReturnCode == PROVISIONING_SUCCESSFUL:
             provisioningData['client_id'] = payload[0:36]
             provisioningData['auth_token'] = payload[37:]
             provisioningData['secure_ssl_certificate'] = 0
             provisioningData['key'] = ''
             provisioningData['certificate'] = ''
             return provisioningData
-        elif (provisionReturnCode == PROVISIONING_SUCCESSFUL_WITH_CERT):
+        elif provisionReturnCode == PROVISIONING_SUCCESSFUL_WITH_CERT:
             payloadJson = json.loads(payload)
             keys = ['client_id', 'auth_token', 'secure_ssl_certificate', 'key', 'certificate']
             for key in keys:
@@ -463,19 +463,19 @@ class MqttClient:
             self._handleProvisionAndConnectAckCode("Provisioning", provisionReturnCode)
 
     def _handleProvisionAndConnectAckCode(self, type, code):
-        msg = ''
+        msg = (-1,'')
         if (code == CONNECTION_REFUSED_UNACCEPTABLE_PROTOCOL_VERSION):
-            msg = '[MqttClient]:: %s refused unacceptable mqtt protocol version.' % type
+            msg = (1, '[MqttClient]:: %s refused unacceptable mqtt protocol version.' % type)
         elif (code == CONNECTION_REFUSED_IDENTIFIER_REJECTED):
-            msg = '[MqttClient]:: %s refused client identifier rejected.' % type
+            msg = (2, '[MqttClient]:: %s refused client identifier rejected.' % type)
         elif (code == CONNECTION_REFUSED_SERVER_UNAVAILABLE):
-            msg = '[MqttClient]:: %s refused server unavailable. Waiting ...' % type
+            msg = (3, '[MqttClient]:: %s refused server unavailable. Waiting ...' % type)
             self.logger.debug(msg)
             return  # Not an error just wait for server
         elif (code == CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD):
-            msg = '[MqttClient]:: %s refused bad username or password.' % type
+            msg = (4, '[MqttClient]:: %s refused bad username or password.' % type)
         elif (code == CONNECTION_REFUSED_NOT_AUTHORIZED):
-            msg = '[MqttClient]:: %s refused not authorized.' % type
+            msg = (5, '[MqttClient]:: %s refused not authorized.' % type)
         raise MqttConnectError(msg)  # Error should be bubbled up
 
     def _handlePublishMsg(self, mqttMessage):
