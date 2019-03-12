@@ -48,6 +48,9 @@ class InstaMsg(Thread):
         self.name = 'InstaMsg Thread'
         self.alive = Event()
         self.alive.set()
+        self.stopped = Event()
+        self.stopped.set()
+        self.stopped.clear()
         self.__initLogger()
         self._clientId = clientId
         self._authKey = authKey
@@ -135,7 +138,7 @@ class InstaMsg(Thread):
         try:
             while self.alive.isSet():
                 try:
-                    if (self._mqttClient is not None):
+                    if self._mqttClient is not None and not self.stopped.isSet():
                         self._mqttClient.process()
                         self._processHandlersTimeout()
                         self._processLogToServerTimeout()
@@ -147,17 +150,18 @@ class InstaMsg(Thread):
 
     def close(self):
         try:
+            self.stopped.set()
             if (self._mqttClient is not None):
                 self._mqttClient.disconnect()
-                self._mqttClient = None
-            self._sendMsgReplyHandlers = None
-            self._msgHandlers = None
-            self._subscribers = None
             return 1
         except:
             return -1
         finally:
             self.alive.clear()
+            self._mqttClient = None
+            self._sendMsgReplyHandlers = None
+            self._msgHandlers = None
+            self._subscribers = None
 
     def publish(self, topic, msg, qos=INSTAMSG_QOS0, dup=0, resultHandler=None, timeout=INSTAMSG_RESULT_HANDLER_TIMEOUT,
                 logging=1):
