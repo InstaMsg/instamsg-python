@@ -30,24 +30,24 @@ def start(args):
             instaMsg = None
     
 def __onConnect(instaMsg):
-    print "Client connected to Instamsg"
+    print ("Client connected to Instamsg")
     
 def __onDisConnect():
-    print "Client disconnected."
+    print ("Client disconnected.")
     
       
 def __messageHandler(mqttMessage):
         if(mqttMessage):
-            print "Received message %s" %str(mqttMessage.toString())
+            print ("Received message %s" %str(mqttMessage.toString()))
         
 def __oneToOneMessageHandler(msg):
     if(msg):
-        print "One to One Message received %s" % msg.toString()
+        print ("One to One Message received %s" % msg.toString())
         msgBytes = __unhexelify(msg.body())
         __writeToSerialPort(msgBytes)
         time.sleep(1)
         read_val = __readFromSerialPort(1000)
-        print "Read data:%s" %str(read_val)
+        print ("Read data:%s" %str(read_val))
         msg.reply(__hexlify(read_val))
         
 def __hexlify(data):
@@ -64,32 +64,32 @@ def __unhexelify(data):
 
 def __openSerialPort():
     try:
-        print "Configuring serial port..."
+        print ("Configuring serial port...")
         SER = serial.Serial(ComPort, BaudRate, timeout=1, parity=Parity, rtscts=0)
         SER.close()
-        print "Opening serial port..."
+        print ("Opening serial port...")
         SER.open()
-        print "Serial port opened..."
+        print ("Serial port opened...")
         return SER
     except Exception, e:
-        print e
-        print " handle port in use or invalid name ..." 
+        print (e)
+        print (" handle port in use or invalid name ...")
 
 def __readFromSerialPort(max_bytes):
     try:
-        print "Reading from serial port..."
+        print ("Reading from serial port...")
         return SER.read(size=max_bytes)
     except OSError, e:
-        print "... handle No data received or response timeout here ... "
+        print ("... handle No data received or response timeout here ... ")
  
 
 def __writeToSerialPort(data):
     try:
-        print "Writing to serial port..."
+        print ("Writing to serial port...")
         print SER
         count = SER.write(data)
     except:
-        print " ...Not able to write data ... "
+        print (" ...Not able to write data ... ")
         
 def __closeSerialPort():
     try:

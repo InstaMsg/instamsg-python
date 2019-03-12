@@ -1,1 +1,3 @@
 include LICENSE
+include README.mdinclude versioneer.py
+include src/instamsg/_version.py

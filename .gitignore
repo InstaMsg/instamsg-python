@@ -1,4 +1,6 @@
-/.settings/*
+.settings/*
+.project
+.pydevproject
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -40,6 +42,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+.mypy_cache/
 
 # Translations
 *.mo
@@ -53,3 +56,13 @@ docs/_build/
 
 # PyBuilder
 target/
+
+#Virtual environment
+venv/
+
+#auth.json
+examples/auth.json
+auth.json
+
+#IDE
+.idea/
