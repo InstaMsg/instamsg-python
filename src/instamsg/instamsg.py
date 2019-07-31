@@ -67,8 +67,10 @@ class InstaMsg(Thread):
         self._enableSsl = 1
         self._configHandler = None
         self._rebootHandler = None
+        self._updateFirmwareHandler = None
         self._metadata = {}
         self._mqttClient = None
+        self._enableLogToServer = 0
         self._initOptions(options)
         clientIdAndUsername = self._getClientIdAndUsername(clientId)
         mqttoptions = self._mqttClientOptions(clientIdAndUsername[1], authKey, self._keepAliveTimer)
@@ -99,6 +101,7 @@ class InstaMsg(Thread):
             self._configServerToClientTopic = "instamsg/clients/%s/config/serverToClient" % clientId
             self._configClientToServerTopic = "instamsg/clients/%s/config/clientToServer" % clientId
             self._networkInfoTopic = "instamsg/clients/%s/network" % clientId
+            self._updateFirmwareTopic = "instamsg/clients/%s/update_firmware" % clientId
 
     def _initOptions(self, options):
         if ('configHandler' in options):
@@ -107,6 +110,9 @@ class InstaMsg(Thread):
         if ('rebootHandler' in options):
             if (not callable(options['rebootHandler'])): raise ValueError('rebootHandler should be a callable object.')
             self._rebootHandler = options['rebootHandler']
+        if( 'updateFirmwareHandler' in options): 
+            if(not callable(options['updateFirmwareHandler'])): raise ValueError('updateFirmwareHandler should be a callable object.')
+            self._updateFirmwareHandler = options['updateFirmwareHandler']
         if ('enableTcp' in options):
             self._enableTcp = options.get('enableTcp')
         if ('enableLogToServer' in options):
@@ -339,6 +345,8 @@ class InstaMsg(Thread):
                 self._handlePointToPointMessage(mqttMsg)
             elif (mqttMsg.topic == self._rebootTopic):
                 self._handleSystemRebootMessage()
+            elif(mqttMsg.topic == self._updateFirmwareTopic):
+                self._handleSystemFirmwareUpdateMessage(mqttMsg)
             elif (mqttMsg.topic == self._configServerToClientTopic):
                 self._handleConfigMessage(mqttMsg)
             elif (mqttMsg.topic == self._enableServerLoggingTopic):
@@ -472,6 +480,11 @@ class InstaMsg(Thread):
     def _handleSystemRebootMessage(self):
         if (callable(self._rebootHandler)):
             self._rebootHandler()
+
+    def _handleSystemFirmwareUpdateMessage(self, mqttMsg):
+        self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Firmware update message received.")
+        if(callable(self._updateFirmwareHandler)):
+            self._updateFirmwareHandler(mqttMsg)
 
     @classmethod
     def _getPort(cls, enableTcp, enableSsl):

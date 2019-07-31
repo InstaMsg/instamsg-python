@@ -93,6 +93,7 @@ def _startInstaMsg(provId='', provkey=''):
                 'enableSsl':1,
                 'configHandler': _configHandler,
                 'rebootHandler': _rebootHandler,
+                'updateFirmwareHandler': _updateFirmwareHandler,
                 'metadata': _getDeviceMetadata()
                 }
     # Try to get auth info from auth.json if file exists
@@ -259,6 +260,9 @@ def _configHandler(result):
 
 def _rebootHandler():
     LOGGER.debug("Received rebbot signal from server.")
+
+def _updateFirmwareHandler(mqttMessage):
+    LOGGER.debug("Received update firmware from server: %s" % json.loads(mqttMessage.payload))
 
 
 def _getDeviceMetadata():
