@@ -321,7 +321,7 @@ class InstaMsg(Thread):
                         self.logger.removeHandler(self.serverLogHandler)
 
     def _processLogToServerTimeout(self):
-        if self._enableLogToServer == 1 and self._disableServerLoggingTime < time.time():
+        if self.enableLogToServer() and self._disableServerLoggingTime < time.time():
             self._enableLogToServer = 0
             self.logger.removeHandler(self.serverLogHandler)
 
@@ -482,7 +482,7 @@ class InstaMsg(Thread):
             self._rebootHandler()
 
     def _handleSystemFirmwareUpdateMessage(self, mqttMsg):
-        self.log(INSTAMSG_LOG_LEVEL_INFO, "[InstaMsg]:: Firmware update message received.")
+        self.logger.info("Firmware update message received.")
         if(callable(self._updateFirmwareHandler)):
             self._updateFirmwareHandler(mqttMsg)
 
