@@ -105,7 +105,7 @@ class MqttClient:
                 if (self._connecting and ((self._lastConnectTime + CONNECT_ACK_TIMEOUT) < time.time())):
                     self.logger.info("Connect Ack timed out. Resetting connection.")
                     self._resetSock()
-        except socket.error as msg:
+        except Exception in [socket.error, socket.herror, socket.gaierror] :
             self._resetSock()
             self.logger.error("Socket error (%s)" % (str(msg)))
             self.logger.debug("", exc_info=True)
@@ -159,7 +159,7 @@ class MqttClient:
             self._connecting = 0
             self.logger.error("Socket timed out sending connect.")
             self.logger.debug("", exc_info=True)
-        except socket.error as msg:
+        except Exception in [socket.error, socket.herror, socket.gaierror] :
             self._resetSock()
             self.logger.error("Socket Error -  %s" % (str(msg)))
             self.logger.debug("", exc_info=True)

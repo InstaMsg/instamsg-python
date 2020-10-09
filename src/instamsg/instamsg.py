@@ -148,6 +148,7 @@ class InstaMsg(Thread):
                         self._mqttClient.process()
                         self._processHandlersTimeout()
                         self._processLogToServerTimeout()
+                        time.sleep(0.5)
                 except Exception as e:
                     self.logger.error("Error starting InstaMsg (%s) Retrying..." % (str(e)))
                     self.logger.debug("Error starting InstaMsg", exc_info=True)
