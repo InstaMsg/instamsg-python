@@ -65,6 +65,8 @@ class MqttClient:
         self._lastConnectTime = time.time()
         self.decoderErrorCount = 0
         self._connectAckTimeoutCount = 0
+        self.internet_address_family = socket.AF_INET
+        self.keepAliveTimeout = KEEP_ALIVE_TIMEOUT
 
     def _initOptions(self, options):
         options['clientId'] = self.clientId
@@ -93,19 +95,19 @@ class MqttClient:
                 if (self._sockInit):
                     mqttMsg = self._receive()
                     if (mqttMsg): self._handleMqttMessage(mqttMsg)
-                    if ((self._lastPingReqTime + (
-                            1 + MQTT_KEEP_ALIVE_TIMER_GRACE) * self.keepAliveTimer) < time.time()):
-                        if (self._lastPingRespTime is None):
+                    if ((self._lastPingReqTime + self.keepAliveTimeout) < time.time() and self._lastPingRespTime is None):
                             self.disconnect()
-                        else:
-                            self._sendPingReq()
-                            self._lastPingReqTime = time.time()
-                            self._lastPingRespTime = None
+                    if ((self._lastPingReqTime + self.keepAliveTimer) < time.time()):
+                        self._sendPingReq()
+                        self._lastPingReqTime = time.time()
+                        self._lastPingRespTime = None
                 self._processHandlersTimeout()
                 if (self._connecting and ((self._lastConnectTime + CONNECT_ACK_TIMEOUT) < time.time())):
                     self.logger.info("Connect Ack timed out. Resetting connection.")
                     self._resetSock()
-        except Exception in [socket.error, socket.herror, socket.gaierror] :
+        except (socket.error, socket.herror, socket.gaierror) as msg :
+            if msg.errno == 101:
+                self._toggle_socket_family()
             self._resetSock()
             self.logger.error("Socket error (%s)" % (str(msg)))
             self.logger.debug("", exc_info=True)
@@ -159,7 +161,9 @@ class MqttClient:
             self._connecting = 0
             self.logger.error("Socket timed out sending connect.")
             self.logger.debug("", exc_info=True)
-        except Exception in [socket.error, socket.herror, socket.gaierror] :
+        except (socket.error, socket.herror, socket.gaierror) as msg :
+            if msg.errno == 101:
+                self._toggle_socket_family()
             self._resetSock()
             self.logger.error("Socket Error -  %s" % (str(msg)))
             self.logger.debug("", exc_info=True)
@@ -272,9 +276,17 @@ class MqttClient:
         else:
             raise ValueError('Callback should be a callable object.')
 
+    def _toggle_socket_family(self):
+        ## In case the interface doesnot support IPV4 by default try IPV6
+        ## Keep toggling between then and trying
+        if self.internet_address_family == socket.AF_INET:
+            self.internet_address_family = socket.AF_INET6
+        else:
+            self.internet_address_family = socket.AF_INET
+
     def _setSocketNConnect(self):
         self.logger.info('Connecting to %s:%s' % (self.host, str(self.port)))
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        self._sock = socket.socket(self.internet_address_family, socket.SOCK_STREAM, 0)
         self._sock.settimeout(MQTT_SOCKET_TIMEOUT)
         if self.enableSsl and ssl:
             self._sock = ssl.wrap_socket(self._sock,
