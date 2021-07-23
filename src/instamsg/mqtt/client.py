@@ -308,7 +308,7 @@ class MqttClient:
         except socket.timeout:
             pass
         except socket.error as err:
-            if ssl and isinstance(err, (ssl.SSLWantWriteError, ssl.SSL_ERROR_WANT_READ)):
+            if ssl and isinstance(err, (ssl.SSLWantWriteError, ssl.SSLWantReadError)):
                 pass
             else:
                 self._resetSock()
@@ -327,7 +327,7 @@ class MqttClient:
                 finally:
                     self.lock.release()
         except socket.error as err:
-            if ssl and isinstance(err, (ssl.SSLWantWriteError, ssl.SSL_ERROR_WANT_READ)):
+            if ssl and isinstance(err, (ssl.SSLWantWriteError, ssl.SSLWantReadError)):
                 pass
             else:
                 self._resetSock()
