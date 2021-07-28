@@ -53,7 +53,7 @@ class MqttEncoder:
                 encodedPayload.extend(self._encodeIntShort(len(mqttConnectMessage.password)))
                 encodedPayload.extend(self._encodeStringUtf8(mqttConnectMessage.password))
             # Encode Variable Header
-            connectFlagsByte = 0;
+            connectFlagsByte = 0
             if (mqttConnectMessage.hasUserName): 
                 connectFlagsByte |= 0x80
             if (mqttConnectMessage.hasPassword):
@@ -64,7 +64,7 @@ class MqttEncoder:
             if (mqttConnectMessage.isWillFlag):
                 connectFlagsByte |= 0x04
             if (mqttConnectMessage.isCleanSession):
-                connectFlagsByte |= 0x02;
+                connectFlagsByte |= 0x02
             encodedVariableHeader = bytearray()
             encodedVariableHeader.extend(self._encodeIntShort(len(mqttConnectMessage.protocolName)))
             encodedVariableHeader.extend(self._encodeStringUtf8(mqttConnectMessage.protocolName))
@@ -188,11 +188,11 @@ class MqttEncoder:
     def _getFixedHeaderFirstByte(self, fixedHeader):
         firstByte = fixedHeader.messageType
         if (fixedHeader.dup):
-            firstByte |= 0x08;
-        firstByte |= fixedHeader.qos << 1;
+            firstByte |= 0x08
+        firstByte |= fixedHeader.qos << 1
         if (fixedHeader.retain):
-            firstByte |= 0x01;
-        return firstByte;
+            firstByte |= 0x01
+        return firstByte
     
     def _encodeRemainingLength(self, num):
         remainingLengthBytes = bytearray()

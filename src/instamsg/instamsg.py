@@ -43,7 +43,7 @@ class InstaMsg(Thread):
             'oneToOneMessageHandler should be a callable object.')
         if (clientId):
             if (len(clientId) != 36): raise ValueError(
-                'clientId: %s is not a valid uuid e.g. cbf7d550-7204-11e4-a2ad-543530e3bc65') % clientId
+                'clientId: %s is not a valid uuid e.g. cbf7d550-7204-11e4-a2ad-543530e3bc65'% clientId)
         Thread.__init__(self)
         self.name = 'InstaMsg Thread'
         self.alive = Event()
@@ -300,25 +300,25 @@ class InstaMsg(Thread):
         messageId = self._clientId + "-" + str(int(time.time() * 1000))
         while (messageId in self._sendMsgReplyHandlers):
             messageId = self._clientId + "-" + str(int(time.time() * 1000))
-        return messageId;
+        return messageId
 
     def _enableServerLogging(self, msg):
         if (msg):
-            msgJson = self._parseJson(msg.payload);
+            msgJson = self._parseJson(msg.payload)
             if (msgJson is not None and ('client_id' in msgJson and ('logging' in msgJson))):
                 clientId = str(msgJson['client_id'])
                 logging = msgJson['logging']
                 if (logging == "1"):
                     if (clientId not in self._logsListener):
                         self._logsListener.append(clientId)
-                        self._enableLogToServer = 1;
+                        self._enableLogToServer = 1
                         self._disableServerLoggingTime = time.time() + 1800  # Disable automaticaly in 30 min
                         self.logger.addHandler(self.serverLogHandler)
                 else:
                     if (clientId in self._logsListener):
-                        self._logsListener.remove(clientId);
+                        self._logsListener.remove(clientId)
                     if (len(self._logsListener) == 0):
-                        self._enableLogToServer = 0;
+                        self._enableLogToServer = 0
                         self.logger.removeHandler(self.serverLogHandler)
 
     def _processLogToServerTimeout(self):

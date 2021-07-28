@@ -312,7 +312,7 @@ class MqttClient:
                 pass
             else:
                 self._resetSock()
-                self.logger.error("SocketError" % (str(err)))
+                self.logger.error("SocketError: %s" % (str(err)))
                 self.logger.debug("", exc_info=True)
 
 
@@ -346,7 +346,7 @@ class MqttClient:
 
     def _validateQos(self, qos):
         if (not isinstance(qos, int) or qos < MQTT_QOS0 or qos > MQTT_QOS2):
-            raise ValueError('Qos should be a between %d and %d.' % (MQTT_QOS0, self.MQTT_QOS2))
+            raise ValueError('Qos should be a between %d and %d.' % (MQTT_QOS0, MQTT_QOS2))
 
     def _validateRetain(self, retain):
         if (not isinstance(retain, int) or retain != 0 or retain != 1):
